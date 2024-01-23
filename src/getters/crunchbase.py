@@ -104,3 +104,11 @@ def latest_table(file_name) -> pd.DataFrame:
 def secondlatest_table(file_name) -> pd.DataFrame:
     """Specific table from second latest CB snapeshot"""
     return get_crunchbase_table(file_name, directory(1))
+
+
+# Example use
+# Get the latest organizations table
+
+table = latest_table("organizations.csv")
+# Or
+table = latest_table(FILE_NAMES[15])

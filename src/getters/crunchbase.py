@@ -13,6 +13,8 @@ import re
 # Define global variables
 BUCKET_NAME = "discovery-iss"
 S3_PATH = "data/crunchbase/"
+AWS_ACCESS_KEY =
+AWS_SECRET_KEY = 
 FILE_NAMES = [
     "acquisitions.csv",
     "category_groups.csv",
@@ -39,10 +41,6 @@ FILE_NAMES = [
 S3 = boto3.client(
     "s3", aws_access_key_id=AWS_ACCESS_KEY, aws_secret_access_key=AWS_SECRET_KEY
     )
-
-
-# Initialize logging
-logging.basicConfig(level=logging.INFO)
 
 
 # Building block functions - not to be used directly

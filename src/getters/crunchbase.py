@@ -45,7 +45,7 @@ S3 = boto3.client(
 
 # Building block functions - not to be used directly
 
-def list_s3_directories():
+def list_s3_directories() -> list[str]:
     """List S3 directories under the specified prefix."""
     # List all objects with the specified prefix
     objects = S3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=S3_PATH, Delimiter='/')
@@ -55,7 +55,7 @@ def list_s3_directories():
 
     return directories
 
-def extract_timestamp(directory):
+def extract_timestamp(directory: str) -> str or None:
     """ Use regular expression to extract the timestamp from a directory"""
     match = re.search(r'\d{8}_\d{6}', directory)
     if match:
@@ -64,7 +64,7 @@ def extract_timestamp(directory):
     else:
         return None
     
-def directory(position) -> str:
+def directory(position: int) -> str:
     """Directory name for a given snapshot of CB data."""
     
     # Get the list of directories
@@ -83,7 +83,7 @@ def directory(position) -> str:
         if sorted_timestamps[position] in directory:
             return directory
 
-def get_crunchbase_table(file_name, version) -> pd.DataFrame:
+def get_crunchbase_table(file_name: str, version: str) -> pd.DataFrame:
     """Table with named CB data"""
     s3_key = S3_PATH + version + file_name
     logging.info(f"Fetching data from S3 key: {s3_key}")
@@ -97,7 +97,7 @@ def get_crunchbase_table(file_name, version) -> pd.DataFrame:
 
 # Master functions - to be used directly
 
-def latest_table(file_name) -> pd.DataFrame:
+def latest_table(file_name: str) -> pd.DataFrame:
     """Specific table from latest CB snapshot"""
     return get_crunchbase_table(file_name, directory(0))
 

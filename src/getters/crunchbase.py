@@ -102,7 +102,7 @@ def latest_table(file_name: str) -> pd.DataFrame:
     return get_crunchbase_table(file_name, directory(0))
 
 def secondlatest_table(file_name) -> pd.DataFrame:
-    """Specific table from second latest CB snapeshot"""
+    """Specific table from second latest CB snapshot"""
     return get_crunchbase_table(file_name, directory(1))
 
 

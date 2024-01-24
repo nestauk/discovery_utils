@@ -1,5 +1,5 @@
 """
-discovery_utils.getters.crunchbase.py
+discovery_utils.src/getters/crunchbase.py
 
 Module for easy access to downloaded CB data on S3.
 

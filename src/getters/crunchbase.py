@@ -56,7 +56,7 @@ def list_s3_directories() -> list[str]:
     return directories
 
 def extract_timestamp(directory: str) -> str or None:
-    """ Use regular expression to extract the timestamp from a directory"""
+    """ Use regular expression to extract the timestamp from a directory name"""
     match = re.search(r'\d{8}_\d{6}', directory)
     if match:
         timestamp_str = match.group()

@@ -80,14 +80,11 @@ def get_table(timestamp: str,
     return response
 
 
-# FUNCTION FOR SPECIFIC USE: TO GET LATEST OR SECOND LATEST SNAPSHOT
+# FUNCTIONS FOR SPECIFIC USE: TO GET LATEST OR SECOND LATEST SNAPSHOT, OR TODAY'S OR YESTERDAY'S SNAPSHOT
 # USES THE VERSATILE FUNCTION ABOVE
 
-# _directory(DIRECTORIES, TIMESTAMPS[0])
-# _directory(DIRECTORIES, TIMESTAMPS[1])
 
-
-
+# THE LATEST AND SECOND LATEST SNAPSHOTS NEED TESTING
 def latest_table(file_name: str,
                  s3_client: BaseClient,
                  bucket_name_raw: str = BUCKET_NAME_RAW,
@@ -114,6 +111,8 @@ def secondlatest_table(file_name: str,
     
     return get_table(secondlatest_timestamp, file_name, s3_client, file_names_raw, bucket_name_raw)
 
+
+# STILL TESTING THESE TWO
 def get_tdy_table(file_name: str,
                   s3_client: BaseClient,
                   ) -> pd.DataFrame:

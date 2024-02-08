@@ -6,109 +6,128 @@ Module for easy access to downloaded CB data on S3.
 """
 import pandas as pd
 import boto3
+import os
+from dotenv import load_dotenv
+from botocore.client import BaseClient
+from src.utils import s3 as s3
+from src.utils import timestamps as ts
+from datetime import datetime, timedelta
 import logging
-import re
+import json
+
+# logging level
+logging.basicConfig(level=logging.INFO)
+
+load_dotenv()
+
+# Retrieve AWS file information from environment variables
+BUCKET_NAME_RAW = os.getenv("BUCKET_NAME_RAW")
+FILE_NAMES_RAW = json.loads(os.getenv("FILE_NAMES_RAW", '[]'))
+S3_PATH_RAW = os.getenv("S3_PATH_RAW")
+# Retrieve AWS credentials from environment variables
+AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
+AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
 
 
-# Define global variables
-BUCKET_NAME = "discovery-iss"
-S3_PATH = "data/crunchbase/"
-AWS_ACCESS_KEY =
-AWS_SECRET_KEY = 
-FILE_NAMES = [
-    "acquisitions.csv",
-    "category_groups.csv",
-    "checksum.csv",
-    "degrees.csv",
-    "event_appearances.csv",
-    "events.csv",
-    "funding_rounds.csv",
-    "funds.csv",
-    "investment_partners.csv",
-    "investments.csv",
-    "investors.csv",
-    "ipos.csv",
-    "jobs.csv",
-    "org_parents.csv",
-    "organization_descriptions.csv",
-    "organizations.csv",
-    "people_descriptions.csv",
-    "people.csv"
-]
+# Left these here for when they are used using AWS CLI
+# os.environ["AWS_ACCESS_KEY"]
+# os.environ["AWS_SECRET_KEY"]
 
 
-# Initialize S3 client
-S3 = boto3.client(
-    "s3", aws_access_key_id=AWS_ACCESS_KEY, aws_secret_access_key=AWS_SECRET_KEY
-    )
+# VERSATILE FUNCTION FOR GENERALISED USE
 
+def _s3_client(aws_access_key_id: str = AWS_ACCESS_KEY,
+               aws_secret_access_key: str = AWS_SECRET_KEY
+               ) -> BaseClient:
+    """Initialize S3 client"""
+    S3 = boto3.client(
+        "s3", aws_access_key_id, aws_secret_access_key
+        )
+    return S3
 
-# Building block functions - not to be used directly
-
-def list_s3_directories() -> list[str]:
-    """List S3 directories under the specified prefix."""
-    # List all objects with the specified prefix
-    objects = S3.list_objects_v2(Bucket=BUCKET_NAME, Prefix=S3_PATH, Delimiter='/')
-
-    # Extract the directory names from the CommonPrefixes list
-    directories = [prefix['Prefix'] for prefix in objects.get('CommonPrefixes', [])]
-
-    return directories
-
-def extract_timestamp(directory: str) -> str or None:
-    """ Use regular expression to extract the timestamp from a directory"""
-    match = re.search(r'\d{8}_\d{6}', directory)
-    if match:
-        timestamp_str = match.group()
-        return timestamp_str
-    else:
-        return None
+def get_table(timestamp: str,
+              file_name: str,
+              s3_client: BaseClient,
+              file_names_raw: list = FILE_NAMES_RAW,
+              bucket_name_raw: str = BUCKET_NAME_RAW
+              ) -> pd.DataFrame:
+    """Specific table with named CB data from a specific version, dynamically selecting the exact file match."""
     
-def directory(position: int) -> str:
-    """Directory name for a given snapshot of CB data."""
+    # Validate file name is in the list of known file names without extensions
+    if file_name not in file_names_raw:
+        raise ValueError(f"File '{file_name}' not found in FILE_NAMES_RAW.")
     
-    # Get the list of directories
-    directories = list_s3_directories()
+    # Construct the directory path for the given timestamp
+    dir_path = S3_PATH_RAW + "Crunchbase_" + timestamp + "/"
     
-    # Get a list of timestamps
-    timestamps = []
-    for directory in directories:
-        timestamps.append(extract_timestamp(directory))
+    # Retrieve all file names in the directory
+    all_files = s3._get_bucket_filenames(bucket_name_raw, dir_path)
     
-    # Sort the timestamps in descending order
-    sorted_timestamps = sorted(timestamps, reverse=True)
+    # Filter for files that exactly match the file name, ignoring the extension
+    # This assumes file names in the bucket have a format like "filename.extension"
+    matched_files = [f for f in all_files if os.path.splitext(os.path.basename(f))[0] == file_name]
     
-    # Return the most recent directory
-    for directory in directories:
-        if sorted_timestamps[position] in directory:
-            return directory
-
-def get_crunchbase_table(file_name: str, version: str) -> pd.DataFrame:
-    """Table with named CB data"""
-    s3_key = S3_PATH + version + file_name
-    logging.info(f"Fetching data from S3 key: {s3_key}")
-
-    # Read the file contents from S3
-    response = S3.get_object(Bucket=BUCKET_NAME, Key=s3_key)
-    data = response["Body"].read().decode("utf-8")
+    # Check if there is exactly one matching file
+    if not matched_files:
+        raise FileNotFoundError(f"No file exactly matching '{file_name}' found in {dir_path}")
+    elif len(matched_files) > 1:
+        raise ValueError(f"Multiple files exactly matching '{file_name}' found in {dir_path}, requiring clarification.")
     
-    return pd.read_csv(data)
+    # Assuming there's exactly one matching file, proceed to download and load it as a DataFrame
+    s3_key = matched_files[0]  # The full key of the matching file
+    response = s3._download_obj(s3_client, bucket_name_raw, s3_key, download_as="dataframe")
+    
+    return response
 
 
-# Master functions - to be used directly
+# FUNCTION FOR SPECIFIC USE: TO GET LATEST OR SECOND LATEST SNAPSHOT
+# USES THE VERSATILE FUNCTION ABOVE
 
-def latest_table(file_name: str) -> pd.DataFrame:
+# _directory(DIRECTORIES, TIMESTAMPS[0])
+# _directory(DIRECTORIES, TIMESTAMPS[1])
+
+
+
+def latest_table(file_name: str,
+                 s3_client: BaseClient,
+                 bucket_name_raw: str = BUCKET_NAME_RAW,
+                 file_names_raw: list = FILE_NAMES_RAW,
+                 ) -> pd.DataFrame:
     """Specific table from latest CB snapshot"""
-    return get_crunchbase_table(file_name, directory(0))
+    # Get the latest timestamp
+    directories = s3._list_directories(s3_client, bucket_name_raw, S3_PATH_RAW)
+    timestamps = ts._timestamp_list(directories)
+    latest_timestamp = ts._directory(directories, timestamps[0])
+    
+    return get_table(latest_timestamp, file_name, s3_client, file_names_raw, bucket_name_raw)
 
-def secondlatest_table(file_name) -> pd.DataFrame:
-    """Specific table from second latest CB snapeshot"""
-    return get_crunchbase_table(file_name, directory(1))
+def secondlatest_table(file_name: str,
+                       s3_client: BaseClient,
+                       bucket_name_raw: str = BUCKET_NAME_RAW,
+                       file_names_raw: list = FILE_NAMES_RAW,
+                       ) -> pd.DataFrame:
+    """Specific table from latest CB snapshot"""
+    # Get the latest timestamp
+    directories = s3._list_directories(s3_client, bucket_name_raw, S3_PATH_RAW)
+    timestamps = ts._timestamp_list(directories)
+    secondlatest_timestamp = ts._directory(directories, timestamps[1])
+    
+    return get_table(secondlatest_timestamp, file_name, s3_client, file_names_raw, bucket_name_raw)
 
+def get_tdy_table(file_name: str,
+                  s3_client: BaseClient,
+                  ) -> pd.DataFrame:
+    """Specific table from today's CB snapshot"""
+    # Get today's date in YYYY-MM-DD format
+    today_timestamp = datetime.now().strftime('%Y-%m-%d')
+    
+    return get_table(today_timestamp, file_name, s3_client)
 
-# Example use
-# Get the latest organizations table
-
-table = latest_table("organizations.csv")
-# Or
-table = latest_table(FILE_NAMES[15])
+def get_ytdy_table(file_name: str,
+                   s3_client: BaseClient,
+                   ) -> pd.DataFrame:
+    """Specific table from yesterday's CB snapshot"""
+    # Get yesterday's date in YYYY-MM-DD format
+    yesterday_timestamp = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    return get_table(yesterday_timestamp, file_name, s3_client)

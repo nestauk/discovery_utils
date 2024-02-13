@@ -75,8 +75,6 @@ def get_table(timestamp: str,
 # FUNCTIONS FOR SPECIFIC USE: TO GET LATEST OR SECOND LATEST SNAPSHOT, OR TODAY'S OR YESTERDAY'S SNAPSHOT
 # USES THE VERSATILE FUNCTION ABOVE
 
-
-# STILL TESTING THESE TWO
 def get_tdy_table(file_name: str,
                   s3_client: BaseClient,
                   ) -> pd.DataFrame:

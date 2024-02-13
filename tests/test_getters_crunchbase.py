@@ -29,7 +29,7 @@ def mock_s3_env(aws_credentials):
         conn.create_bucket(Bucket=os.environ["BUCKET_NAME_RAW"])
         
         # Import dummy data and read the CSV file into a DataFrame
-        csv_file_path = 'tests/data.csv'
+        csv_file_path = 'tests/dummydata.csv'
         csv_data = pd.read_csv(csv_file_path)
         
         # Convert DataFrame to CSV content in bytes
@@ -44,6 +44,8 @@ def mock_s3_env(aws_credentials):
         snapshots = {
             "2024-01-30": ".csv",
             "2024-01-31": ".parquet",
+            "2024-02-05": ".csv",
+            "2024-02-06": ".parquet"
         }
 
         # Define the base file names without extensions
@@ -95,18 +97,13 @@ def test_get_tdy_table(mock_get_table):
     # Arrange
     mock_s3_client = boto3.client('s3', region_name='us-east-1')
     file_name = 'organizations'
+    today_str = datetime.now().strftime('%Y-%m-%d')
     
-    # Mock today's date to a fixed date
-    fixed_today = datetime(2024, 2, 6)
-    with patch('datetime.datetime') as mock_datetime:
-        mock_datetime.now.return_value = fixed_today
-        today_str = fixed_today.strftime('%Y-%m-%d')
-        
-        # Act
-        cb.get_tdy_table(file_name, mock_s3_client)
-        
-        # Assert
-        mock_get_table.assert_called_once_with(today_str, file_name, mock_s3_client)
+    # Act
+    cb.get_tdy_table(file_name, mock_s3_client)
+    
+    # Assert
+    mock_get_table.assert_called_once_with(today_str, file_name, mock_s3_client)
 
 @patch('src.getters.crunchbase.get_table')
 @mock_s3
@@ -114,15 +111,10 @@ def test_get_ytdy_table(mock_get_table):
     # Arrange
     mock_s3_client = boto3.client('s3', region_name='us-east-1')
     file_name = 'organizations'
+    yesterday_str = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
     
-    # Mock today's date to a fixed date
-    fixed_today = datetime(2024, 2, 6)
-    with patch('datetime.datetime') as mock_datetime:
-        mock_datetime.now.return_value = fixed_today
-        yesterday_str = (fixed_today - timedelta(days=1)).strftime('%Y-%m-%d')
-        
-        # Act
-        cb.get_ytdy_table(file_name, mock_s3_client)
-        
-        # Assert
-        mock_get_table.assert_called_once_with(yesterday_str, file_name, mock_s3_client)
+    # Act
+    cb.get_ytdy_table(file_name, mock_s3_client)
+    
+    # Assert
+    mock_get_table.assert_called_once_with(yesterday_str, file_name, mock_s3_client)

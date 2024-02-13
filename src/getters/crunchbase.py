@@ -22,8 +22,9 @@ load_dotenv()
 
 # Retrieve AWS file information from environment variables
 BUCKET_NAME_RAW = os.getenv("BUCKET_NAME_RAW")
-FILE_NAMES_RAW = json.loads(os.getenv("FILE_NAMES_RAW", '[]'))
 S3_PATH_RAW = os.getenv("S3_PATH_RAW")
+FILE_NAMES_RAW = json.loads(os.getenv("FILE_NAMES_RAW"))
+
 # Retrieve AWS credentials from environment variables
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
 AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
@@ -63,18 +64,9 @@ def get_table(timestamp: str,
     # Retrieve all file names in the directory
     all_files = s3._get_bucket_filenames(bucket_name_raw, dir_path)
     
-    # Filter for files that exactly match the file name, ignoring the extension
-    # This assumes file names in the bucket have a format like "filename.extension"
-    matched_files = [f for f in all_files if os.path.splitext(os.path.basename(f))[0] == file_name]
+    # Match the file name to the exact file in the directory
+    s3_key = s3._match_one_file(all_files, file_name, dir_path)
     
-    # Check if there is exactly one matching file
-    if not matched_files:
-        raise FileNotFoundError(f"No file exactly matching '{file_name}' found in {dir_path}")
-    elif len(matched_files) > 1:
-        raise ValueError(f"Multiple files exactly matching '{file_name}' found in {dir_path}, requiring clarification.")
-    
-    # Assuming there's exactly one matching file, proceed to download and load it as a DataFrame
-    s3_key = matched_files[0]  # The full key of the matching file
     response = s3._download_obj(s3_client, bucket_name_raw, s3_key, download_as="dataframe")
     
     return response
@@ -82,6 +74,26 @@ def get_table(timestamp: str,
 
 # FUNCTIONS FOR SPECIFIC USE: TO GET LATEST OR SECOND LATEST SNAPSHOT, OR TODAY'S OR YESTERDAY'S SNAPSHOT
 # USES THE VERSATILE FUNCTION ABOVE
+
+
+# STILL TESTING THESE TWO
+def get_tdy_table(file_name: str,
+                  s3_client: BaseClient,
+                  ) -> pd.DataFrame:
+    """Specific table from today's CB snapshot"""
+    # Get today's date in YYYY-MM-DD format
+    today_timestamp = datetime.now().strftime('%Y-%m-%d')
+    
+    return get_table(today_timestamp, file_name, s3_client)
+
+def get_ytdy_table(file_name: str,
+                   s3_client: BaseClient,
+                   ) -> pd.DataFrame:
+    """Specific table from yesterday's CB snapshot"""
+    # Get yesterday's date in YYYY-MM-DD format
+    yesterday_timestamp = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    
+    return get_table(yesterday_timestamp, file_name, s3_client)
 
 
 # THE LATEST AND SECOND LATEST SNAPSHOTS NEED TESTING
@@ -110,23 +122,3 @@ def secondlatest_table(file_name: str,
     secondlatest_timestamp = ts._directory(directories, timestamps[1])
     
     return get_table(secondlatest_timestamp, file_name, s3_client, file_names_raw, bucket_name_raw)
-
-
-# STILL TESTING THESE TWO
-def get_tdy_table(file_name: str,
-                  s3_client: BaseClient,
-                  ) -> pd.DataFrame:
-    """Specific table from today's CB snapshot"""
-    # Get today's date in YYYY-MM-DD format
-    today_timestamp = datetime.now().strftime('%Y-%m-%d')
-    
-    return get_table(today_timestamp, file_name, s3_client)
-
-def get_ytdy_table(file_name: str,
-                   s3_client: BaseClient,
-                   ) -> pd.DataFrame:
-    """Specific table from yesterday's CB snapshot"""
-    # Get yesterday's date in YYYY-MM-DD format
-    yesterday_timestamp = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    
-    return get_table(yesterday_timestamp, file_name, s3_client)

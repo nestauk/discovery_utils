@@ -7,6 +7,7 @@ import warnings
 import pandas as pd
 import numpy as np
 from typing import List
+from pathlib import Path
 
 
 def _get_bucket_filenames(bucket_name: str, dir_name: str = "") -> List[str]:
@@ -26,6 +27,16 @@ def _get_bucket_filenames(bucket_name: str, dir_name: str = "") -> List[str]:
     return [
         object_summary.key for object_summary in bucket.objects.filter(Prefix=dir_name)
     ]
+    
+def _match_one_file(all_files: list, file_name: str, dir_path: str) -> str:
+    matched_files = [f for f in all_files if Path(f).stem == file_name]
+    
+    if not matched_files:
+        raise FileNotFoundError(f"No file exactly matching '{file_name}' found in {dir_path}")
+    elif len(matched_files) > 1:
+        raise ValueError(f"Multiple files exactly matching '{file_name}' found in {dir_path}, requiring clarification.")
+    
+    return matched_files[0]
 
 def _list_directories(s3_client: BaseClient, bucket: str, prefix: str) -> list:
     """List S3 directories under the specified prefix."""

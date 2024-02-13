@@ -107,14 +107,14 @@ def test_get_tdy_table(mock_get_table):
 
 @patch('src.getters.crunchbase.get_table')
 @mock_s3
-def test_get_ytdy_table(mock_get_table):
+def test_get_ytd_table(mock_get_table):
     # Arrange
     mock_s3_client = boto3.client('s3', region_name='us-east-1')
     file_name = 'organizations'
     yesterday_str = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
     
     # Act
-    cb.get_ytdy_table(file_name, mock_s3_client)
+    cb.get_ytd_table(file_name, mock_s3_client)
     
     # Assert
     mock_get_table.assert_called_once_with(yesterday_str, file_name, mock_s3_client)

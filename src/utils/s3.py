@@ -8,7 +8,23 @@ import pandas as pd
 import numpy as np
 from typing import List
 from pathlib import Path
+import os
 
+# Retrieve AWS credentials from environment variables
+AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
+AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
+# Left these here for when they are used using AWS CLI
+# os.environ["AWS_ACCESS_KEY"]
+# os.environ["AWS_SECRET_KEY"]
+
+def _client(aws_access_key_id: str = AWS_ACCESS_KEY,
+               aws_secret_access_key: str = AWS_SECRET_KEY
+               ) -> BaseClient:
+    """Initialize S3 client"""
+    S3 = boto3.client(
+        "s3", aws_access_key_id, aws_secret_access_key
+        )
+    return S3
 
 def _get_bucket_filenames(bucket_name: str, dir_name: str = "") -> List[str]:
     """Get a list of all files in bucket directory.

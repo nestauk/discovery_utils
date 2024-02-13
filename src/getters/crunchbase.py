@@ -25,26 +25,8 @@ BUCKET_NAME_RAW = os.getenv("BUCKET_NAME_RAW")
 S3_PATH_RAW = os.getenv("S3_PATH_RAW")
 FILE_NAMES_RAW = json.loads(os.getenv("FILE_NAMES_RAW"))
 
-# Retrieve AWS credentials from environment variables
-AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
-AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
-
-
-# Left these here for when they are used using AWS CLI
-# os.environ["AWS_ACCESS_KEY"]
-# os.environ["AWS_SECRET_KEY"]
-
 
 # VERSATILE FUNCTION FOR GENERALISED USE
-
-def _s3_client(aws_access_key_id: str = AWS_ACCESS_KEY,
-               aws_secret_access_key: str = AWS_SECRET_KEY
-               ) -> BaseClient:
-    """Initialize S3 client"""
-    S3 = boto3.client(
-        "s3", aws_access_key_id, aws_secret_access_key
-        )
-    return S3
 
 def get_table(timestamp: str,
               file_name: str,
@@ -72,7 +54,7 @@ def get_table(timestamp: str,
     return response
 
 
-# FUNCTIONS FOR SPECIFIC USE: TO GET LATEST OR SECOND LATEST SNAPSHOT, OR TODAY'S OR YESTERDAY'S SNAPSHOT
+# FUNCTIONS FOR SPECIFIC USE: TO GET TODAY'S OR YESTERDAY'S SNAPSHOT
 # USES THE VERSATILE FUNCTION ABOVE
 
 def get_tdy_table(file_name: str,
@@ -84,7 +66,7 @@ def get_tdy_table(file_name: str,
     
     return get_table(today_timestamp, file_name, s3_client)
 
-def get_ytdy_table(file_name: str,
+def get_ytd_table(file_name: str,
                    s3_client: BaseClient,
                    ) -> pd.DataFrame:
     """Specific table from yesterday's CB snapshot"""
@@ -92,31 +74,3 @@ def get_ytdy_table(file_name: str,
     yesterday_timestamp = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
     
     return get_table(yesterday_timestamp, file_name, s3_client)
-
-
-# THE LATEST AND SECOND LATEST SNAPSHOTS NEED TESTING
-def latest_table(file_name: str,
-                 s3_client: BaseClient,
-                 bucket_name_raw: str = BUCKET_NAME_RAW,
-                 file_names_raw: list = FILE_NAMES_RAW,
-                 ) -> pd.DataFrame:
-    """Specific table from latest CB snapshot"""
-    # Get the latest timestamp
-    directories = s3._list_directories(s3_client, bucket_name_raw, S3_PATH_RAW)
-    timestamps = ts._timestamp_list(directories)
-    latest_timestamp = ts._directory(directories, timestamps[0])
-    
-    return get_table(latest_timestamp, file_name, s3_client, file_names_raw, bucket_name_raw)
-
-def secondlatest_table(file_name: str,
-                       s3_client: BaseClient,
-                       bucket_name_raw: str = BUCKET_NAME_RAW,
-                       file_names_raw: list = FILE_NAMES_RAW,
-                       ) -> pd.DataFrame:
-    """Specific table from latest CB snapshot"""
-    # Get the latest timestamp
-    directories = s3._list_directories(s3_client, bucket_name_raw, S3_PATH_RAW)
-    timestamps = ts._timestamp_list(directories)
-    secondlatest_timestamp = ts._directory(directories, timestamps[1])
-    
-    return get_table(secondlatest_timestamp, file_name, s3_client, file_names_raw, bucket_name_raw)

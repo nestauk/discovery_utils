@@ -16,6 +16,11 @@ python = ">=3.10, <3.13"
 boto3 = "*"
 urllib3 = "<2"
 pandas = "*"
+pyarrow = "^15.0.0"
+fastparquet = "^2024.2.0"
+currencyconverter = "^0.17.16"
+df2gspread = "^1.0.4"
+python-dotenv = "^1.0.1"
 
 
 [tool.poetry.group.test]

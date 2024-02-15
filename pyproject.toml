@@ -21,6 +21,7 @@ fastparquet = "^2024.2.0"
 currencyconverter = "^0.17.16"
 df2gspread = "^1.0.4"
 python-dotenv = "^1.0.1"
+nltk = "^3.8.1"
 
 
 [tool.poetry.group.test]

@@ -1,63 +1,529 @@
 """
 discovery_utils.src.getters.crunchbase.py
 
-Module for data enrichment utils for CB data.
+Module for data enrichment utils for Crunchbase data.
 
-"""        
+"""
 
-# Define global variables 
+import argparse
+import os
+import re
+
+from typing import Dict
+from typing import Iterator
+from typing import List
+
+import dotenv
+import numpy as np
 import pandas as pd
 
+from currency_converter import CurrencyConverter
 
-# EMPLOYEE SIZE
-# to be used with organizations.csv
-
-def _employee_count_threshold(employee_count: int, threshold: int) -> bool:
-    """Check if the employee count is below a certain threshold and return a boolean."""
-    return employee_count < threshold
+from src.utils import google
 
 
-# GEOGRAPHICAL LOCATION
-# to be used with organizations.csv
+dotenv.load_dotenv()
 
-def _country(actual_code: str, expected_code: str) -> bool:
-    """Check if the country code is the expected one and return a boolean."""
-    return actual_code == expected_code
-    
-
-# TOTAL FUNDING GBP CONVERSION
-# to be used with organizations.csv
+# To do: these should be defined in some config file
+SMART_MONEY_TYPES = ["accelerator", "entrepreneurship_program", "incubator", "startup_competition"]
 
 
+# To do: This should probably go to more general utils
+def convert_currency(
+    funding_df: pd.DataFrame,
+    date_column: str,
+    amount_column: str,
+    currency_column: str,
+    converted_column: str = None,
+    target_currency: str = "GBP",
+) -> pd.DataFrame:
+    """
+    Convert amount in any currency to a target currency using CurrencyConverter package.
+    Deal dates should be provided in the datetime.date format
+    NB: Rate conversion for dates before year 2000 is not reliable and hence
+    is not carried out (the function returns nulls instead)
 
-def total_funding_gbp_conversion(data, total_funding_col='total_funding_usd'):
-    """Convert total funding from USD to GBP"""
-    if total_funding_col in data.columns:
-        data['total_funding_gbp'] = data[total_funding_col] * 0.72
+    Args:
+        funding_df: A dataframe which must have a column for a date and amount to be converted
+        date_column: Name of column with deal dates
+        amount_column: Name of column with the amounts in the original currency
+        currency_column: Name of column with the currency codes (eg, 'USD', 'EUR' etc)
+        converted_column: Name for new column with the converted amounts
+
+    Returns:
+        Same dataframe with an extra column for the converted amount
+
+    """
+    # Column name
+    converted_column = f"{amount_column}_{target_currency}" if converted_column is None else converted_column
+    # Check if there is anything to convert
+    rounds_with_funding = len(funding_df[-funding_df[amount_column].isnull()])
+    df = funding_df.copy()
+    if rounds_with_funding > 0:
+        # Set up the currency converter
+        Converter = CurrencyConverter(
+            fallback_on_missing_rate=True,
+            fallback_on_missing_rate_method="linear_interpolation",
+            # If the date is out of bounds (eg, too recent)
+            # then use the closest date available
+            fallback_on_wrong_date=True,
+        )
+        # Convert currencies
+        converted_amounts = []
+        for _, row in df.iterrows():
+            # Only convert deals after year 1999
+            if (row[date_column].year >= 2000) and (row[currency_column] in Converter.currencies):
+                converted_amounts.append(
+                    Converter.convert(
+                        row[amount_column],
+                        row[currency_column],
+                        target_currency,
+                        date=row[date_column],
+                    )
+                )
+            else:
+                converted_amounts.append(np.nan)
+        df[converted_column] = converted_amounts
+        # For deals that were originally in the target currency, use the database values
+        deals_in_target_currency = df[currency_column] == target_currency
+        df.loc[deals_in_target_currency, converted_column] = df.loc[deals_in_target_currency, amount_column].copy()
     else:
-        print(f"Warning: '{total_funding_col}' column not found in DataFrame.")
+        # If nothing to convert, copy the values and return
+        df[converted_column] = df[amount_column].copy()
+    return df
 
 
-# TOTAL FUNDING SIZE
-# to be used with an already created "total_funding_gbp" column in organizations.csv
+def get_org_funding_rounds(
+    organisations: pd.DataFrame, funding_rounds: pd.DataFrame, org_id_column: str = "id"
+) -> pd.DataFrame:
+    """
+    Get the funding rounds for a specific organisation
 
-# Building block function - not to be used directly
+    Args:
+        org_id: Crunchbase organisation identifier
+        funding_rounds: Dataframe with funding rounds
+        investments: Dataframe with investments
+        investors: Dataframe with investors
 
-def categorize_total_funding(data, total_funding_col='total_funding_gbp'):
-    """Categorise total funding based on the 'total_funding_gbp' column"""
-    if total_funding_col in data.columns:
-        data['total_funding_size'] = pd.cut(data[total_funding_col],
-                                            bins=[0, 1000000, 5000000, float('inf')],
-                                            labels=['potential_investment_opp', 'investment_opp', 'too_big_to_invest'])
+    Returns:
+        Dataframe with the funding rounds for the specified organisation
+    """
+    # Get the funding rounds for the organisation
+    return (
+        organisations[[org_id_column, "name"]]
+        .rename(columns={org_id_column: "org_id"})
+        .merge(funding_rounds, how="left", on="org_id")
+    )
+
+
+def get_funding_round_investors(funding_rounds: pd.DataFrame, investments, investors) -> pd.DataFrame:
+    """
+    Gets the investors involved in the specified funding rounds
+
+    Args:
+        funding_rounds: Dataframe with funding rounds
+        investments: Dataframe with investments
+        investors: Dataframe with investors
+
+    Returns:
+        Dataframe with the investors for the specified funding rounds
+    """
+    investments_cols = [
+        "funding_round_id",
+        "investor_id",
+        "investor_name",
+        "investor_type",
+        "is_lead_investor",
+    ]
+    investor_cols = [
+        "id",
+        "investor_types",
+        "cb_url",
+    ]
+    return funding_rounds.merge(investments[investments_cols], on="funding_round_id", how="left",).merge(
+        investors[investor_cols].rename(columns={"id": "investor_id", "cb_url": "investor_url"}),
+        on="investor_id",
+        how="left",
+    )
+
+
+def _process_keywords(keywords: List[str], separator: str = ",") -> List[List[str]]:
+    """Process a list of keywords and keyword combinations
+
+    Args:
+        keywords (List[str]): list of keywords in the format ['keyword_1', 'keyword_2, keyword_3']
+
+    Returns:
+        List[List[str]]: list of lists of keywords in the format ['keyword_1', ['keyword_2', 'keyword_3']]
+    """
+    return [[word.strip() for word in line.split(separator)] for line in keywords]
+
+
+def get_keywords(
+    keyword_type: str,
+) -> Dict:
+    """
+    Fetch keywords from a Google Sheet
+
+    Keywords types correspond to missions and are ASF, AFS, AHL, and X.
+    """
+    # Process keywords
+    keywords_df = google.access_google_sheet(
+        os.environ["SHEET_ID_KEYWORDS"],
+        keyword_type,
+    )
+    return (
+        keywords_df.assign(keywords_list=lambda df: _process_keywords(df["Keywords"].to_list()))
+        .groupby("Subcategory")
+        .agg(keywords=("keywords_list", list))
+        .to_dict()["keywords"]
+    )
+
+
+def _enrich_funding_smart_money(
+    funding_rounds_enriched: pd.DataFrame,
+    investments: pd.DataFrame,
+    investors: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Enrich the funding rounds with smart money information
+    """
+    # Fetch the manually curated smart money table
+    smart_money_manual_df = google.access_google_sheet(os.environ["SHEET_ID_INVESTORS"], "investors")
+    return funding_rounds_enriched.pipe(
+        get_funding_round_investors, investments=investments, investors=investors
+    ).assign(
+        # Check if investment was made by one of the smart money types
+        smart_money_auto=lambda df: df.investor_types.str.contains("|".join(SMART_MONEY_TYPES)),
+        # Check if investment was made by one of the manually curated smart money investors
+        smart_money_manual=lambda df: df.investor_url.isin(smart_money_manual_df["Crunchbase URL"]),
+        # Combine the two smart money columns
+        smart_money=lambda df: df.smart_money_auto | df.smart_money_manual,
+    )
+
+
+def enrich_funding_rounds(
+    funding_rounds: pd.DataFrame,
+    investments: pd.DataFrame,
+    investors: pd.DataFrame,
+    funding_round_ids: Iterator[str] = None,
+    cutoff_year: int = 2000,
+) -> pd.DataFrame:
+    """
+    Enrich the funding rounds with additional information
+    """
+    # If no IDs are specified, assume all funding rounds are needed
+    if funding_round_ids is None:
+        funding_round_ids = funding_rounds.id.unique()
+
+    return (
+        funding_rounds.query("id in @funding_round_ids")
+        # More informative column names
+        .rename(
+            columns={
+                "id": "funding_round_id",
+                "name": "funding_round_name",
+            }
+        )
+        # Remove really old funding rounds
+        .query(f"announced_on > '{cutoff_year}'")
+        .sort_values("announced_on")
+        .assign(
+            # Convert investment amounts to thousands
+            raised_amount=lambda df: df["raised_amount"] / 1e3,
+            raised_amount_usd=lambda df: df["raised_amount_usd"] / 1e3,
+            # Convert date strings to datetimes
+            announced_on_date=lambda df: pd.to_datetime(df["announced_on"]),
+        )
+        # Get years from dates
+        .assign(year=lambda df: df["announced_on_date"].apply(lambda x: x.year))
+        # Convert USD currency to GBP
+        .pipe(
+            convert_currency,
+            date_column="announced_on_date",
+            amount_column="raised_amount",
+            currency_column="raised_amount_currency_code",
+            converted_column="raised_amount_gbp",
+            target_currency="GBP",
+        )
+        .pipe(
+            _enrich_funding_smart_money,
+            investments=investments,
+            investors=investors,
+        )
+    )
+
+
+def _process_max_employees(count_range: str) -> int:
+    """
+    Convert the employee count range to a single (highest) number
+
+    Args:
+        count_range: A string with the employee count range, eg, '51-100', '10000+'
+
+    Returns:
+        A single integer with the maximum number of employees
+    """
+    if count_range is None:
+        return 0
+    elif type(count_range) == str:
+        return int(count_range.split("-")[-1].replace("+", ""))
     else:
-        print(f"Warning: '{total_funding_col}' column not found in DataFrame.")
+        raise ValueError(f"Unexpected value for employee count: {count_range}")
 
-# Master functions - to be used directly
 
-def total_funding_size_table(df: pd.DataFrame) -> None:
-    """Categorise total funding for the whole DataFrame"""
-    categorize_total_funding(df)
+def _enrich_org_total_funding_gbp(
+    organisations: pd.DataFrame,
+    funding_rounds_enriched: pd.DataFrame,
+    date_start: int = None,
+    date_end: str = None,
+):
+    """
+    Get the total funding in GBP for a set of organisations
 
-def total_funding_size_record(record: pd.Series) -> None:
-    """Categorise total funding for a specific record"""
-    categorize_total_funding(record)
+    Args:
+        funding_rounds_enriched_df: Dataframe with enriched funding rounds
+        date_start: Earliest date for the funding rounds to include, in the format 'YYYY-MM-DD'
+        date_end: Latest date for the funding rounds to include, in the format 'YYYY-MM-DD'
+
+    Returns:
+        Dataframe with columns 'org_id' and 'total_funding_gbp'. Organisations that have no funding
+        in the specified time period will not be included in the dataframe
+    """
+    # If no IDs are specified, assume all organisations are needed
+    organisation_ids = funding_rounds_enriched.org_id.unique()
+
+    # Determine the dates to include
+    date_start = date_start or funding_rounds_enriched.announced_on.min()
+    date_end = date_end or funding_rounds_enriched.announced_on.max()
+
+    funding_rounds_df = (
+        funding_rounds_enriched.loc[
+            funding_rounds_enriched["announced_on"].between(date_start, date_end, inclusive="both")
+        ]
+        .query("org_id in @organisation_ids")
+        .groupby("org_id")
+        .agg(
+            total_funding_gbp=("raised_amount_gbp", "sum"),
+            num_rounds=("funding_round_id", "count"),
+        )
+        .reindex(organisation_ids)
+        .reset_index()
+        .fillna(0)
+    )
+
+    return organisations.merge(funding_rounds_df, how="left", left_on="id", right_on="org_id").drop(columns="org_id")
+
+
+def _enrich_org_investment_opportunity(organisations_enriched: pd.DataFrame) -> pd.DataFrame:
+    """ """
+    # Check for valid employee count and country
+    valid_count_and_country = (organisations_enriched.employee_count_max <= 100) & (
+        organisations_enriched.country_code == "GBR"
+    )
+    # Investment opportunities tags
+    potential_investment_opp = valid_count_and_country & (organisations_enriched.total_funding_gbp < 1e3)
+    investment_opp = (
+        valid_count_and_country
+        & (organisations_enriched.total_funding_gbp >= 1e3)
+        & (organisations_enriched.total_funding_gbp <= 5e3)
+    )
+    return organisations_enriched.assign(
+        potential_investment_opp=potential_investment_opp, investment_opp=investment_opp
+    )
+
+
+def _enrich_org_smart_money(
+    organisations: pd.DataFrame,
+    funding_rounds_enriched: pd.DataFrame,
+) -> pd.DataFrame:
+    """ """
+    # find orgs that have received smart money
+    smart_money_orgs = funding_rounds_enriched.query("smart_money").org_id.unique()
+    return organisations.assign(smart_money=lambda df: df.id.isin(smart_money_orgs))
+
+
+def _split_sentences(texts: list, ids: list) -> (list, list):
+    """
+    Split a list of texts into sentences and keep track of which text each sentence belongs to
+
+    Args:
+        texts: A list of strings
+        ids: A list of identifiers for each text
+
+    Returns:
+        A tuple with two lists: the first list contains the sentences, and the second list contains the identifiers
+    """
+    # precompile the regex for efficiency
+    sentence_endings = re.compile(r"(?<=[.!?]) +")
+    sentences = []
+    sentence_ids = []
+    for i, text in enumerate(texts):
+        for sentence in sentence_endings.split(text):
+            sentences.append(sentence)
+            sentence_ids.append(ids[i])
+    return sentences, sentence_ids
+
+
+def _find_keyword_hits(keywords: List[List[str]], sentences: List[str]) -> List[bool]:
+    """
+    Check if a text contains any of the keywords or keyword combinatons
+    """
+    hits = []
+    for text in sentences:
+        keyword_hits = True
+        for keyword in keywords:
+            keyword_hits = keyword_hits and (keyword in text)
+        hits.append(False or keyword_hits)
+    return hits
+
+
+def get_organisation_descriptions(
+    organisations: pd.DataFrame,
+    organisation_descriptions: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Creates a full text description from the short description and the description columns
+    """
+    return (
+        organisations[["id", "short_description"]]
+        .merge(organisation_descriptions[["id", "description"]], on="id", how="left")
+        .dropna(subset=["short_description", "description"], how="all")
+        .fillna("")
+        .assign(text=lambda df: df["short_description"] + ". " + df["description"])
+        .drop(columns=["short_description", "description"])
+    )
+
+
+def _enrich_keyword_labels(
+    text_df: pd.DataFrame,
+    keyword_type: str,
+) -> pd.DataFrame:
+    """
+    Enrich organisation data by adding topic and mission labels based on keyword hits
+    """
+    # Fetch keywords
+    subcategory_to_keywords = get_keywords(keyword_type)
+    # Split text into sentences
+    sentences, sentence_ids = _split_sentences(text_df.text.to_list(), text_df.id.to_list())
+    sentence_ids = np.array(sentence_ids)
+    hits_df = []
+    for topic in subcategory_to_keywords:
+        hits = []
+        for keywords in subcategory_to_keywords[topic]:
+            hits.append(_find_keyword_hits(keywords, sentences))
+
+        # Find if any of the subcategory keywords are present in the text
+        hits_matrix = np.array(hits).any(axis=0)
+        # Get array indices for texts with keywords
+        hits_indices = np.where(hits_matrix == True)[0]
+        if hits_indices.size == 0:
+            continue
+        # Get corresponding unique ids
+        hit_ids = set(sentence_ids[hits_indices])
+
+        # Save to a dataframe
+        hits_df.append(
+            pd.DataFrame(
+                data={
+                    "id": list(hit_ids),
+                    "topic_label": topic,
+                }
+            )
+        )
+    return pd.concat(hits_df, ignore_index=True).assign(mission_label=keyword_type)
+
+
+def _transform_labels_df(
+    labels_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Group the labels dataframe by organisation ID and aggregate the labels into sets
+    """
+    return (
+        labels_df.groupby("id")
+        .agg(
+            mission_labels=("mission_label", lambda x: set(list(x))),
+            topic_labels=("topic_label", lambda x: set(list(x))),
+        )
+        .reset_index()
+    )
+
+
+def enrich_organisations(
+    organisations: pd.DataFrame,
+    funding_rounds_enriched: pd.DataFrame,
+    organisation_descriptions: pd.DataFrame,
+    organisation_ids: Iterator[str] = None,
+) -> pd.DataFrame:
+    """
+    Enrich organisation data
+    """
+    # If no IDs are specified, assume all organisations are needed
+    if organisation_ids is None:
+        organisation_ids = organisations.id.unique()
+
+    organisations_enriched = (
+        organisations.query("id in @organisation_ids")
+        .assign(employee_count_max=lambda df: df["employee_count"].apply(_process_max_employees))
+        .pipe(_enrich_org_total_funding_gbp, funding_rounds_enriched=funding_rounds_enriched)
+        .pipe(_enrich_org_investment_opportunity)
+        .pipe(_enrich_org_smart_money, funding_rounds_enriched=funding_rounds_enriched)
+    )
+
+    topic_labels = _enrich_topic_labels(organisations_enriched, organisation_descriptions)
+    return organisations_enriched.merge(topic_labels, how="left", on="id")
+
+
+def _enrich_topic_labels(
+    organisations: pd.DataFrame,
+    organisation_descriptions: pd.DataFrame,
+):
+    """
+    Enrich organisation data by adding topic and mission labels for all missions
+    """
+    text_df = get_organisation_descriptions(organisations, organisation_descriptions)
+    labels_df = []
+    for mission in ["ASF", "AHL", "AFS", "X"]:
+        labels_df.append(_enrich_keyword_labels(text_df, mission))
+    return pd.concat(labels_df, ignore_index=True).pipe(_transform_labels_df)
+
+
+if __name__ == "__main__":
+
+    # Use argparase to get the test flag
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--test", action="store_true", help="Use a subset of the data for testing")
+    args = parser.parse_args()
+    test = args.test
+
+    # To do: For prototyping purposes, loading local files instead of using getters here. Should change to using getters.
+    from src import PROJECT_DIR
+
+    organisations = pd.read_parquet(PROJECT_DIR / "src/enrichment/organizations.parquet")
+    funding_rounds = pd.read_parquet(PROJECT_DIR / "src/enrichment/funding_rounds.parquet")
+    investments = pd.read_parquet(PROJECT_DIR / "src/enrichment/investments.parquet")
+    investors = pd.read_parquet(PROJECT_DIR / "src/enrichment/investors.parquet")
+    organisation_descriptions = pd.read_parquet(PROJECT_DIR / "src/enrichment/organization_descriptions.parquet")
+
+    if test:
+        organisation_ids = organisations.head(10000).id.unique()
+    else:
+        organisation_ids = None
+    print(f"Enriching data for {len(organisation_ids)} organisations")
+
+    funding_rounds_enriched = enrich_funding_rounds(
+        funding_rounds,
+        investments,
+        investors,
+    )
+    organisations_enriched = enrich_organisations(
+        organisations,
+        funding_rounds_enriched,
+        organisation_descriptions,
+        organisation_ids=organisation_ids,
+    )
+
+    # Export the results (To do: save to S3)
+    funding_rounds_enriched.to_parquet("funding_rounds_enriched.parquet")
+    organisations_enriched.to_parquet("organisations_enriched.parquet")

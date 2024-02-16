@@ -3,6 +3,10 @@ discovery_utils.src.getters.crunchbase.py
 
 Module for data enrichment utils for Crunchbase data.
 
+Usage:
+python src/enrichment/crunchbase.py
+
+python src/enrichment/crunchbase.py --test
 """
 
 import argparse
@@ -431,7 +435,10 @@ def _enrich_keyword_labels(
                 }
             )
         )
-    return pd.concat(hits_df, ignore_index=True).assign(mission_label=keyword_type)
+    if len(hits_df) == 0:
+        return pd.DataFrame(columns=["id", "topic_label"])
+    else:
+        return pd.concat(hits_df, ignore_index=True).assign(mission_label=keyword_type)
 
 
 def _transform_labels_df(
@@ -500,14 +507,15 @@ if __name__ == "__main__":
     # To do: For prototyping purposes, loading local files instead of using getters here. Should change to using getters.
     from src import PROJECT_DIR
 
-    organisations = pd.read_parquet(PROJECT_DIR / "src/enrichment/organizations.parquet")
-    funding_rounds = pd.read_parquet(PROJECT_DIR / "src/enrichment/funding_rounds.parquet")
-    investments = pd.read_parquet(PROJECT_DIR / "src/enrichment/investments.parquet")
-    investors = pd.read_parquet(PROJECT_DIR / "src/enrichment/investors.parquet")
-    organisation_descriptions = pd.read_parquet(PROJECT_DIR / "src/enrichment/organization_descriptions.parquet")
+    DATA_DIR = PROJECT_DIR / "src/enrichment"
+    organisations = pd.read_parquet(DATA_DIR / "organizations.parquet")
+    funding_rounds = pd.read_parquet(DATA_DIR / "funding_rounds.parquet")
+    investments = pd.read_parquet(DATA_DIR / "investments.parquet")
+    investors = pd.read_parquet(DATA_DIR / "investors.parquet")
+    organisation_descriptions = pd.read_parquet(DATA_DIR / "organization_descriptions.parquet")
 
     if test:
-        organisation_ids = organisations.head(10000).id.unique()
+        organisation_ids = organisations.head(10).id.unique()
     else:
         organisation_ids = None
     print(f"Enriching data for {len(organisation_ids)} organisations")

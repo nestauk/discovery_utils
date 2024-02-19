@@ -43,6 +43,7 @@ def convert_currency(
 ) -> pd.DataFrame:
     """
     Convert amount in any currency to a target currency using CurrencyConverter package.
+
     Deal dates should be provided in the datetime.date format
     NB: Rate conversion for dates before year 2000 is not reliable and hence
     is not carried out (the function returns nulls instead)
@@ -120,9 +121,11 @@ def get_org_funding_rounds(
     )
 
 
-def get_funding_round_investors(funding_rounds: pd.DataFrame, investments, investors) -> pd.DataFrame:
+def get_funding_round_investors(
+    funding_rounds: pd.DataFrame, investments: pd.DataFrame, investors: pd.DataFrame
+) -> pd.DataFrame:
     """
-    Gets the investors involved in the specified funding rounds
+    Get the investors involved in the specified funding rounds
 
     Args:
         funding_rounds: Dataframe with funding rounds
@@ -189,9 +192,7 @@ def _enrich_funding_smart_money(
     investments: pd.DataFrame,
     investors: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Enrich the funding rounds with smart money information
-    """
+    """Enrich the funding rounds with smart money information"""
     # Fetch the manually curated smart money table
     smart_money_manual_df = google.access_google_sheet(os.environ["SHEET_ID_INVESTORS"], "investors")
     return funding_rounds_enriched.pipe(
@@ -213,9 +214,7 @@ def enrich_funding_rounds(
     funding_round_ids: Iterator[str] = None,
     cutoff_year: int = 2000,
 ) -> pd.DataFrame:
-    """
-    Enrich the funding rounds with additional information
-    """
+    """Enrich the funding rounds with additional information"""
     # If no IDs are specified, assume all funding rounds are needed
     if funding_round_ids is None:
         funding_round_ids = funding_rounds.id.unique()
@@ -281,7 +280,7 @@ def _enrich_org_total_funding_gbp(
     funding_rounds_enriched: pd.DataFrame,
     date_start: int = None,
     date_end: str = None,
-):
+) -> pd.DataFrame:
     """
     Get the total funding in GBP for a set of organisations
 
@@ -320,7 +319,7 @@ def _enrich_org_total_funding_gbp(
 
 
 def _enrich_org_investment_opportunity(organisations_enriched: pd.DataFrame) -> pd.DataFrame:
-    """ """
+    """Enrich the organisations with investment opportunity tags"""
     # Check for valid employee count and country
     valid_count_and_country = (organisations_enriched.employee_count_max <= 100) & (
         organisations_enriched.country_code == "GBR"
@@ -341,7 +340,7 @@ def _enrich_org_smart_money(
     organisations: pd.DataFrame,
     funding_rounds_enriched: pd.DataFrame,
 ) -> pd.DataFrame:
-    """ """
+    """Enrich the organisations with smart money tag"""
     # find orgs that have received smart money
     smart_money_orgs = funding_rounds_enriched.query("smart_money").org_id.unique()
     return organisations.assign(smart_money=lambda df: df.id.isin(smart_money_orgs))
@@ -370,9 +369,7 @@ def _split_sentences(texts: list, ids: list) -> (list, list):
 
 
 def _find_keyword_hits(keywords: List[List[str]], sentences: List[str]) -> List[bool]:
-    """
-    Check if a text contains any of the keywords or keyword combinatons
-    """
+    """Check if a text contains any of the keywords or keyword combinatons"""
     hits = []
     for text in sentences:
         keyword_hits = True
@@ -386,9 +383,7 @@ def get_organisation_descriptions(
     organisations: pd.DataFrame,
     organisation_descriptions: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Creates a full text description from the short description and the description columns
-    """
+    """Create a full text description from the short description and the description columns"""
     return (
         organisations[["id", "short_description"]]
         .merge(organisation_descriptions[["id", "description"]], on="id", how="left")
@@ -403,14 +398,15 @@ def _enrich_keyword_labels(
     text_df: pd.DataFrame,
     keyword_type: str,
 ) -> pd.DataFrame:
-    """
-    Enrich organisation data by adding topic and mission labels based on keyword hits
-    """
+    """Enrich organisation data by adding topic and mission labels based on keyword hits"""
     # Fetch keywords
     subcategory_to_keywords = get_keywords(keyword_type)
     # Split text into sentences
     sentences, sentence_ids = _split_sentences(text_df.text.to_list(), text_df.id.to_list())
     sentence_ids = np.array(sentence_ids)
+    # General terms
+    general_terms = None
+
     hits_df = []
     for topic in subcategory_to_keywords:
         hits = []
@@ -420,11 +416,14 @@ def _enrich_keyword_labels(
         # Find if any of the subcategory keywords are present in the text
         hits_matrix = np.array(hits).any(axis=0)
         # Get array indices for texts with keywords
-        hits_indices = np.where(hits_matrix == True)[0]
+        hits_indices = np.where(hits_matrix == True)[0]  # noqa: E712
         if hits_indices.size == 0:
             continue
         # Get corresponding unique ids
         hit_ids = set(sentence_ids[hits_indices])
+        # Check if this was 'general terms' topic
+        if "general terms" in topic:
+            general_terms = hit_ids.copy()
 
         # Save to a dataframe
         hits_df.append(
@@ -438,20 +437,28 @@ def _enrich_keyword_labels(
     if len(hits_df) == 0:
         return pd.DataFrame(columns=["id", "topic_label"])
     else:
-        return pd.concat(hits_df, ignore_index=True).assign(mission_label=keyword_type)
+        hits_df = pd.concat(hits_df, ignore_index=True).assign(mission_label=keyword_type)
+        # Filter noise using general mission topic area terms
+        if general_terms is None:
+            return hits_df
+        else:
+            return hits_df.query("id in @general_terms").reset_index(drop=True)
 
 
 def _transform_labels_df(
     labels_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Group the labels dataframe by organisation ID and aggregate the labels into sets
-    """
+    """Group the labels dataframe by organisation ID and aggregate the labels into sets"""
     return (
         labels_df.groupby("id")
         .agg(
             mission_labels=("mission_label", lambda x: set(list(x))),
             topic_labels=("topic_label", lambda x: set(list(x))),
+        )
+        # Coverting sets to strings
+        .assign(
+            mission_labels=lambda df: df.mission_labels.apply(lambda x: ",".join(x) if type(x) is set else x),
+            topic_labels=lambda df: df.topic_labels.apply(lambda x: ",".join(x) if type(x) is set else x),
         )
         .reset_index()
     )
@@ -463,9 +470,7 @@ def enrich_organisations(
     organisation_descriptions: pd.DataFrame,
     organisation_ids: Iterator[str] = None,
 ) -> pd.DataFrame:
-    """
-    Enrich organisation data
-    """
+    """Enrich organisation data"""
     # If no IDs are specified, assume all organisations are needed
     if organisation_ids is None:
         organisation_ids = organisations.id.unique()
@@ -485,10 +490,8 @@ def enrich_organisations(
 def _enrich_topic_labels(
     organisations: pd.DataFrame,
     organisation_descriptions: pd.DataFrame,
-):
-    """
-    Enrich organisation data by adding topic and mission labels for all missions
-    """
+) -> pd.DataFrame:
+    """Enrich organisation data by adding topic and mission labels for all missions"""
     text_df = get_organisation_descriptions(organisations, organisation_descriptions)
     labels_df = []
     for mission in ["ASF", "AHL", "AFS", "X"]:
@@ -518,7 +521,7 @@ if __name__ == "__main__":
         organisation_ids = organisations.head(10).id.unique()
     else:
         organisation_ids = None
-    print(f"Enriching data for {len(organisation_ids)} organisations")
+    print(f"Enriching data for {len(organisation_ids)} organisations")  # noqa: T001
 
     funding_rounds_enriched = enrich_funding_rounds(
         funding_rounds,

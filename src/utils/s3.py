@@ -1,33 +1,39 @@
-import boto3
-from botocore.client import BaseClient
 import io
-import pickle
-from fnmatch import fnmatch
-import warnings
-import pandas as pd
-import numpy as np
-from typing import List
-from pathlib import Path
+import json
 import os
+import pickle  # nosec
+import warnings
 
+from fnmatch import fnmatch
+from pathlib import Path
+from typing import List
+
+import boto3
+import dotenv
+import numpy as np
+import pandas as pd
+
+from botocore.client import BaseClient
+
+
+dotenv.load_dotenv()
+
+# Retrieve AWS file information from environment variables
+BUCKET_NAME_RAW = os.getenv("BUCKET_NAME_RAW")
 # Retrieve AWS credentials from environment variables
 AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
 AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
-# Left these here for when they are used using AWS CLI
-# os.environ["AWS_ACCESS_KEY"]
-# os.environ["AWS_SECRET_KEY"]
 
-def _client(aws_access_key_id: str = AWS_ACCESS_KEY,
-               aws_secret_access_key: str = AWS_SECRET_KEY
-               ) -> BaseClient:
+
+def s3_client(aws_access_key_id: str = AWS_ACCESS_KEY, aws_secret_access_key: str = AWS_SECRET_KEY) -> BaseClient:
     """Initialize S3 client"""
-    S3 = boto3.client(
-        "s3", aws_access_key_id, aws_secret_access_key
-        )
+    S3 = boto3.client("s3", aws_access_key_id, aws_secret_access_key)
     return S3
+
 
 def _get_bucket_filenames(bucket_name: str, dir_name: str = "") -> List[str]:
     """Get a list of all files in bucket directory.
+
     Taken from Nesta DS Utils.
 
     Args:
@@ -40,29 +46,32 @@ def _get_bucket_filenames(bucket_name: str, dir_name: str = "") -> List[str]:
     """
     s3_resources = boto3.resource("s3")
     bucket = s3_resources.Bucket(bucket_name)
-    return [
-        object_summary.key for object_summary in bucket.objects.filter(Prefix=dir_name)
-    ]
-    
+    return [object_summary.key for object_summary in bucket.objects.filter(Prefix=dir_name)]
+
+
 def _match_one_file(all_files: list, file_name: str, dir_path: str) -> str:
     matched_files = [f for f in all_files if Path(f).stem == file_name]
-    
+
     if not matched_files:
         raise FileNotFoundError(f"No file exactly matching '{file_name}' found in {dir_path}")
     elif len(matched_files) > 1:
-        raise ValueError(f"Multiple files exactly matching '{file_name}' found in {dir_path}, requiring clarification.")
-    
+        raise ValueError(
+            f"Multiple files exactly matching '{file_name}' found in {dir_path}, requiring clarification."
+        )
+
     return matched_files[0]
+
 
 def _list_directories(s3_client: BaseClient, bucket: str, prefix: str) -> list:
     """List S3 directories under the specified prefix."""
     # List all objects with the specified prefix
-    objects = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter='/')
+    objects = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix, Delimiter="/")
 
     # Extract the directory names from the CommonPrefixes list
-    directories = [prefix['Prefix'] for prefix in objects.get('CommonPrefixes', [])]
+    directories = [prefix["Prefix"] for prefix in objects.get("CommonPrefixes", [])]
 
     return directories
+
 
 def _fileobj_to_df(fileobj: io.BytesIO, path_from: str, **kwargs) -> pd.DataFrame:
     """Convert bytes file object into dataframe.
@@ -78,13 +87,6 @@ def _fileobj_to_df(fileobj: io.BytesIO, path_from: str, **kwargs) -> pd.DataFram
         return pd.read_csv(fileobj, **kwargs)
     elif fnmatch(path_from, "*.parquet"):
         return pd.read_parquet(fileobj, **kwargs)
-    elif fnmatch(path_from, "*.xlsx") or fnmatch(path_from, "*.xlsm"):
-        if feature_enabled["excel"]:
-            return pd.read_excel(fileobj, **kwargs)
-        else:
-            raise ModuleNotFoundError(
-                "Please install 'io_extras' extra from nesta_ds_utils or 'openpyxl' to download excel files."
-            )
 
 
 def _fileobj_to_dict(fileobj: io.BytesIO, path_from: str, **kwargs) -> dict:
@@ -145,8 +147,6 @@ def _fileobj_to_np_array(fileobj: io.BytesIO, path_from: str, **kwargs) -> np.nd
     """
     if fnmatch(path_from, "*.csv"):
         np_array_data = np.genfromtxt(fileobj, delimiter=",", **kwargs)
-    elif fnmatch(path_from, "*.parquet"):
-        np_array_data = pq.read_table(fileobj, **kwargs)["data"].to_numpy()
 
     return np_array_data
 
@@ -156,11 +156,12 @@ def _download_obj(
     bucket: str,
     path_from: str,
     download_as: str = None,
-    kwargs_boto: dict = {},
-    kwargs_reading: dict = {},
-) -> any:
+    kwargs_boto: dict = None,
+    kwargs_reading: dict = None,
+) -> any:  # noqa: B006
     """Download data to memory from S3 location.
-    Adapted from Nesta DS Utils: https://github.com/nestauk/nesta_ds_utils/blob/f71ae556f1bbe44b1dff4f1ec502ac0ba45371f5/nesta_ds_utils/loading_saving/S3.py#L331.
+
+    Adapted from Nesta DS Utils
 
     Args:
         bucket (str): Bucket's name.
@@ -173,20 +174,14 @@ def _download_obj(
     Returns:
         any: Downloaded data.
     """
-    if not path_from.endswith(
-        tuple(
-            [".csv", ".parquet", ".json", ".txt", ".pkl", ".geojson", ".xlsx", ".xlsm"]
-        )
-    ):
-        raise NotImplementedError(
-            "This file type is not currently supported for download in memory."
-        )
+    if not path_from.endswith(tuple([".csv", ".parquet", ".json", ".txt", ".pkl", ".geojson", ".xlsx", ".xlsm"])):
+        raise NotImplementedError("This file type is not currently supported for download in memory.")
     fileobj = io.BytesIO()
     s3_client.download_fileobj(bucket, path_from, fileobj, **kwargs_boto)
     fileobj.seek(0)
     if not download_as:
         if path_from.endswith(tuple([".pkl"])):
-            return pickle.load(fileobj, **kwargs_reading)
+            return pickle.load(fileobj, **kwargs_reading)  # nosec
         else:
             raise ValueError("'download_as' is required for this file type.")
     elif download_as == "dataframe":
@@ -194,20 +189,7 @@ def _download_obj(
             return _fileobj_to_df(fileobj, path_from, **kwargs_reading)
         else:
             raise NotImplementedError(
-                "Download as dataframe currently supported only "
-                "for 'csv','parquet','xlsx' and 'xlsm'."
-            )
-    elif download_as == "geodf":
-        if path_from.endswith(tuple([".geojson"])):
-            if _gis_enabled:
-                return _fileobj_to_gdf(fileobj, path_from, **kwargs_reading)
-            else:
-                raise ModuleNotFoundError(
-                    "Please install 'gis' extra from nesta_ds_utils or 'geopandas' to download geodataframes."
-                )
-        else:
-            raise NotImplementedError(
-                "Download as geodataframe currently supported only " "for 'geojson'."
+                "Download as dataframe currently supported only " "for 'csv','parquet','xlsx' and 'xlsm'."
             )
     elif download_as == "dict":
         if path_from.endswith(tuple([".json"])):
@@ -220,33 +202,17 @@ def _download_obj(
             )
             return _fileobj_to_dict(fileobj, path_from, **kwargs_reading)
         else:
-            raise NotImplementedError(
-                "Download as dictionary currently supported only "
-                "for 'json' and 'geojson'."
-            )
+            raise NotImplementedError("Download as dictionary currently supported only " "for 'json' and 'geojson'.")
     elif download_as == "list":
         if path_from.endswith(tuple([".csv", ".txt", ".json"])):
             return _fileobj_to_list(fileobj, path_from, **kwargs_reading)
         else:
-            raise NotImplementedError(
-                "Download as list currently supported only "
-                "for 'csv', 'txt' and 'json'."
-            )
+            raise NotImplementedError("Download as list currently supported only " "for 'csv', 'txt' and 'json'.")
     elif download_as == "str":
         if path_from.endswith(tuple([".txt"])):
             return _fileobj_to_str(fileobj)
         else:
-            raise NotImplementedError(
-                "Download as string currently supported only " "for 'txt'."
-            )
-    elif download_as == "np.array":
-        if path_from.endswith(tuple([".csv", ".parquet"])):
-            return _fileobj_to_np_array(fileobj, path_from, **kwargs_reading)
-        else:
-            raise NotImplementedError(
-                "Download as numpy array currently supported only "
-                "for 'csv' and 'parquet'."
-            )
+            raise NotImplementedError("Download as string currently supported only " "for 'txt'.")
     else:
         raise ValueError(
             "'download_as' not provided. Choose between ('dataframe', 'geodf', "

@@ -13,10 +13,6 @@ import argparse
 import os
 import re
 
-from typing import Dict
-from typing import Iterator
-from typing import List
-
 import dotenv
 import numpy as np
 import pandas as pd
@@ -25,6 +21,8 @@ from currency_converter import CurrencyConverter
 
 from src.utils import google
 
+
+from typing import Dict, Iterator, List, Tuple  # isort: skip
 
 dotenv.load_dotenv()
 
@@ -346,7 +344,7 @@ def _enrich_org_smart_money(
     return organisations.assign(smart_money=lambda df: df.id.isin(smart_money_orgs))
 
 
-def _split_sentences(texts: list, ids: list) -> (list, list):
+def _split_sentences(texts: list, ids: list) -> Tuple[List]:
     """
     Split a list of texts into sentences and keep track of which text each sentence belongs to
 

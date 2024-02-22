@@ -8,10 +8,10 @@ readme = "README.md"
 homepage = "https://github.com/nestauk/discovery_utils"
 repository = "https://github.com/nestauk/discovery_utils"
 packages = [
-    { include = "discovery_utils" },
-    { include = "getters", from = "discovery_utils" },
-    { include = "enrichment", from = "discovery_utils" },
-    { include = "utils", from = "discovery_utils" },
+    { include = "src" , from = "." },
+    { include = "getters", from = "./src/" },
+    { include = "enrichment", from = "./src/" },
+    { include = "utils", from = "./src/" },
 ]
 
 [tool.poetry.dependencies]

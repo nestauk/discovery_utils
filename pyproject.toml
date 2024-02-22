@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "discovery_utils"
+name = "discovery-utils"
 version = "0.1.0"
 description = "Nesta Discovery utilities package"
 authors = ["Nesta", "Solomon Yu <solomon.yu@nesta.org.uk>"]
@@ -8,9 +8,9 @@ readme = "README.md"
 homepage = "https://github.com/nestauk/discovery_utils"
 repository = "https://github.com/nestauk/discovery_utils"
 packages = [
-    { include = "getters", from = "src" },
-    { include = "enrichment", from = "src" },
-    { include = "utils", from = "src" },
+    { include = "getters", from = "discovery_utils" },
+    { include = "enrichment", from = "discovery_utils" },
+    { include = "utils", from = "discovery_utils" },
 ]
 
 [tool.poetry.dependencies]

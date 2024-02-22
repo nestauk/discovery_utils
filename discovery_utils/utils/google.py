@@ -16,7 +16,6 @@ import dotenv
 from df2gspread import gspread2df as g2d
 from oauth2client.service_account import ServiceAccountCredentials
 from pandas import DataFrame
-
 from src import PROJECT_DIR
 from src import S3_BUCKET
 from src import logging

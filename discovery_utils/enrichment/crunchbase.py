@@ -18,7 +18,6 @@ import numpy as np
 import pandas as pd
 
 from currency_converter import CurrencyConverter
-
 from src.utils import google
 
 

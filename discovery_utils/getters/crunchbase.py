@@ -16,7 +16,6 @@ import pandas as pd
 
 from botocore.client import BaseClient
 from dotenv import load_dotenv
-
 from src.utils import s3 as s3
 from src.utils import timestamps as ts
 

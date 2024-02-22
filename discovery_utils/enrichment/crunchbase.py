@@ -1,12 +1,12 @@
 """
-discovery_utils.src.getters.crunchbase.py
+discovery_utils.discovery_utils.enrichment.crunchbase.py
 
 Module for data enrichment utils for Crunchbase data.
 
 Usage:
-python src/enrichment/crunchbase.py
+python discovery_utils/enrichment/crunchbase.py
 
-python src/enrichment/crunchbase.py --test
+python discovery_utils/enrichment/crunchbase.py --test
 """
 
 import argparse
@@ -18,6 +18,7 @@ import numpy as np
 import pandas as pd
 
 from currency_converter import CurrencyConverter
+
 from discovery_utils.utils import google
 
 
@@ -507,7 +508,7 @@ if __name__ == "__main__":
     # To do: For prototyping purposes, loading local files instead of using getters here. Should change to using getters.
     from discovery_utils import PROJECT_DIR
 
-    DATA_DIR = PROJECT_DIR / "src/enrichment"
+    DATA_DIR = PROJECT_DIR / "discovery_utils/enrichment"
     organisations = pd.read_parquet(DATA_DIR / "organizations.parquet")
     funding_rounds = pd.read_parquet(DATA_DIR / "funding_rounds.parquet")
     investments = pd.read_parquet(DATA_DIR / "investments.parquet")

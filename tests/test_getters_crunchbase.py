@@ -10,8 +10,9 @@ import boto3
 import pandas as pd
 import pytest
 
-from discovery_utils.getters import crunchbase as cb
 from moto import mock_s3
+
+from discovery_utils.getters import crunchbase as cb
 
 
 # Set logging
@@ -112,7 +113,7 @@ def test_get_table_invalid_file(mock_s3_env):
 
 
 # Mock for get_table function to avoid actual S3 interaction
-@patch("src.getters.crunchbase.get_table")
+@patch("discovery_utils.getters.crunchbase.get_table")
 @mock_s3
 def test_get_tdy_table(mock_get_table):
     # Arrange
@@ -127,7 +128,7 @@ def test_get_tdy_table(mock_get_table):
     mock_get_table.assert_called_once_with(today_str, file_name, mock_s3_client)
 
 
-@patch("src.getters.crunchbase.get_table")
+@patch("discovery_utils.getters.crunchbase.get_table")
 @mock_s3
 def test_get_ytd_table(mock_get_table):
     # Arrange

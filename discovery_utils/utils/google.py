@@ -14,12 +14,12 @@ from pathlib import PosixPath
 import dotenv
 
 from df2gspread import gspread2df as g2d
+from discovery_utils import PROJECT_DIR
+from discovery_utils import S3_BUCKET
+from discovery_utils import logging
+from discovery_utils.utils.s3 import s3_client
 from oauth2client.service_account import ServiceAccountCredentials
 from pandas import DataFrame
-from src import PROJECT_DIR
-from src import S3_BUCKET
-from src import logging
-from src.utils.s3 import s3_client
 
 
 dotenv.load_dotenv()

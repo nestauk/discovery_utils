@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 from currency_converter import CurrencyConverter
-from src.utils import google
+from discovery_utils.utils import google
 
 
 from typing import Dict, Iterator, List, Tuple  # isort: skip
@@ -505,7 +505,7 @@ if __name__ == "__main__":
     test = args.test
 
     # To do: For prototyping purposes, loading local files instead of using getters here. Should change to using getters.
-    from src import PROJECT_DIR
+    from discovery_utils import PROJECT_DIR
 
     DATA_DIR = PROJECT_DIR / "src/enrichment"
     organisations = pd.read_parquet(DATA_DIR / "organizations.parquet")

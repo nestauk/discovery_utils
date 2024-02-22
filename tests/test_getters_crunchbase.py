@@ -10,9 +10,8 @@ import boto3
 import pandas as pd
 import pytest
 
+from discovery_utils.getters import crunchbase as cb
 from moto import mock_s3
-
-from src.getters import crunchbase as cb
 
 
 # Set logging

@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "discovery_utils"
+name = "discovery-utils"
 version = "0.1.0"
 description = "Nesta Discovery utilities package"
 authors = ["Nesta", "Solomon Yu <solomon.yu@nesta.org.uk>"]

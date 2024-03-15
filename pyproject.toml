@@ -8,7 +8,10 @@ readme = "README.md"
 homepage = "https://github.com/nestauk/discovery_utils"
 repository = "https://github.com/nestauk/discovery_utils"
 packages = [
-    { include = "src" },
+    { include = "discovery_utils" },
+    { include = "getters", from = "discovery_utils" },
+    { include = "enrichment", from = "discovery_utils" },
+    { include = "utils", from = "discovery_utils" },
 ]
 
 [tool.poetry.dependencies]
@@ -81,7 +84,7 @@ force_single_line = true
 combine_as_imports = true
 lines_between_types = 1
 lines_after_imports = 2
-src_paths = ["src", "tests"]
+src_paths = ["discovery_utils", "tests"]
 line_length = 119
 
 [tool.flake8]
@@ -138,7 +141,7 @@ addopts = """
   --color=yes
   --assert=plain
   --cov-report term
-  --cov=src
+  --cov=discovery_utils
   --last-failed
 """
 testpaths = [

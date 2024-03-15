@@ -1,5 +1,5 @@
 """
-discovery_utils.src.getters.crunchbase.py
+discovery_utils.discovery_utils.getters.crunchbase.py
 
 Module for easy access to downloaded CB data on S3.
 
@@ -17,8 +17,8 @@ import pandas as pd
 from botocore.client import BaseClient
 from dotenv import load_dotenv
 
-from src.utils import s3 as s3
-from src.utils import timestamps as ts
+from discovery_utils.utils import s3 as s3
+from discovery_utils.utils import timestamps as ts
 
 
 # logging level

@@ -26,9 +26,12 @@ AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
 
 
 def s3_client(aws_access_key_id: str = AWS_ACCESS_KEY, aws_secret_access_key: str = AWS_SECRET_KEY) -> BaseClient:
-    """Initialize S3 client"""
-    S3 = boto3.client("s3", aws_access_key_id, aws_secret_access_key)
-    return S3
+    """Initialize and return an S3 client"""
+    return boto3.client(
+        "s3",
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key,
+    )
 
 
 def _get_bucket_filenames(bucket_name: str, dir_name: str = "") -> List[str]:

@@ -167,37 +167,56 @@ def _download_obj(
     Adapted from Nesta DS Utils
 
     Args:
+        s3_client (BaseClient): The S3 client.
         bucket (str): Bucket's name.
         path_from (str): Path to data in S3.
         download_as (str, optional): Type of object downloading. Choose between
         ('dataframe', 'geodf', 'dict', 'list', 'str', 'np.array'). Not needed for 'pkl files'.
         kwargs_boto (dict, optional): Dictionary of kwargs for boto3 function 'download_fileobj'.
+            Default is None, which results in an empty dict.
         kwargs_reading (dict, optional): Dictionary of kwargs for reading data.
+            Default is None, which results in an empty dict.
 
     Returns:
         any: Downloaded data.
     """
-    if not path_from.endswith(tuple([".csv", ".parquet", ".json", ".txt", ".pkl", ".geojson", ".xlsx", ".xlsm"])):
+    if kwargs_boto is None:
+        kwargs_boto = {}
+    if kwargs_reading is None:
+        kwargs_reading = {}
+
+    if not path_from.endswith(
+        (
+            ".csv",
+            ".parquet",
+            ".json",
+            ".txt",
+            ".pkl",
+            ".geojson",
+            ".xlsx",
+            ".xlsm",
+        )
+    ):
         raise NotImplementedError("This file type is not currently supported for download in memory.")
     fileobj = io.BytesIO()
     s3_client.download_fileobj(bucket, path_from, fileobj, **kwargs_boto)
     fileobj.seek(0)
     if not download_as:
-        if path_from.endswith(tuple([".pkl"])):
+        if path_from.endswith((".pkl",)):
             return pickle.load(fileobj, **kwargs_reading)  # nosec
         else:
             raise ValueError("'download_as' is required for this file type.")
     elif download_as == "dataframe":
-        if path_from.endswith(tuple([".csv", ".parquet", ".xlsx", ".xlsm"])):
+        if path_from.endswith((".csv", ".parquet", ".xlsx", ".xlsm")):
             return _fileobj_to_df(fileobj, path_from, **kwargs_reading)
         else:
             raise NotImplementedError(
                 "Download as dataframe currently supported only " "for 'csv','parquet','xlsx' and 'xlsm'."
             )
     elif download_as == "dict":
-        if path_from.endswith(tuple([".json"])):
+        if path_from.endswith((".json",)):
             return _fileobj_to_dict(fileobj, path_from, **kwargs_reading)
-        elif path_from.endswith(tuple([".geojson"])):
+        elif path_from.endswith((".geojson",)):
             warnings.warn(
                 "Please check geojson has a member with the name 'type', the value of the member must be one of the following:"
                 "'Point', 'MultiPoint', 'LineString', 'MultiLineString', 'Polygon', 'MultiPolygon', 'GeometryCollection',"
@@ -207,12 +226,12 @@ def _download_obj(
         else:
             raise NotImplementedError("Download as dictionary currently supported only " "for 'json' and 'geojson'.")
     elif download_as == "list":
-        if path_from.endswith(tuple([".csv", ".txt", ".json"])):
+        if path_from.endswith((".csv", ".txt", ".json")):
             return _fileobj_to_list(fileobj, path_from, **kwargs_reading)
         else:
             raise NotImplementedError("Download as list currently supported only " "for 'csv', 'txt' and 'json'.")
     elif download_as == "str":
-        if path_from.endswith(tuple([".txt"])):
+        if path_from.endswith((".txt",)):
             return _fileobj_to_str(fileobj)
         else:
             raise NotImplementedError("Download as string currently supported only " "for 'txt'.")

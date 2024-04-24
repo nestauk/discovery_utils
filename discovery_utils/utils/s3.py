@@ -92,7 +92,7 @@ def _fileobj_to_df(fileobj: io.BytesIO, path_from: str, **kwargs) -> pd.DataFram
         return pd.read_parquet(fileobj, **kwargs)
 
 
-def _fileobj_to_dict(fileobj: io.BytesIO, path_from: str, **kwargs) -> dict:
+def _fileobj_to_dict(fileobj: io.BytesIO, **kwargs) -> dict:
     """Convert bytes file object into dictionary.
 
     Args:

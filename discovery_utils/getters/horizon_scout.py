@@ -14,7 +14,8 @@ def load_training_data(mission: str) -> pd.DataFrame:
         mission (str): Nesta mission ('AHL', 'AFS' or 'ASF')
 
     Returns:
-        (pd.DataFrame): Training dataset relevant to the specified mission ('AHL', 'AFS' or 'ASF')
+        (pd.DataFrame): Training dataset relevant to the specified mission
+                        ('AHL', 'AFS' or 'ASF')
 
     """
     return s3._download_obj(

@@ -7,7 +7,7 @@ from discovery_utils.utils import s3
 client = s3.s3_client()
 
 
-def load_training_data(mission: str) -> pd.DataFrame:
+def get_training_data(mission: str) -> pd.DataFrame:
     """Load training data from S3
 
     Args:

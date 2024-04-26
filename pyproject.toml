@@ -24,6 +24,7 @@ currencyconverter = "^0.17.16"
 df2gspread = "^1.0.4"
 python-dotenv = "^1.0.1"
 nltk = "^3.8.1"
+matplotlib = "^3.8.4"
 
 
 [tool.poetry.group.test]

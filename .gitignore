@@ -167,3 +167,4 @@ notebooks/
 
 *.parquet
 .credentials/*
+*.csv

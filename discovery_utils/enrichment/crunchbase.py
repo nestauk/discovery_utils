@@ -28,6 +28,47 @@ dotenv.load_dotenv()
 
 # To do: these should be defined in some config file
 SMART_MONEY_TYPES = ["accelerator", "entrepreneurship_program", "incubator", "startup_competition"]
+# Criteria for investment opportunities
+MIN_INVESTMENT = 1e3
+MAX_INVESTMENT = 10e3
+MAX_EMPLOYEE_COUNT = 100
+COUNTRIES_SCOPE = [
+    "GBR",
+    "DEU",
+    "ESP",
+    "FRA",
+    "ROM",
+    "NLD",
+    "AUT",
+    "NOR",
+    "GRC",
+    "HRV",
+    "SWE",
+    "CZE",
+    "IRL",
+    "LTU",
+    "HUN",
+    "ITA",
+    "BGR",
+    "POL",
+    "SVK",
+    "EST",
+    "FIN",
+    "CHE",
+    "DNK",
+    "LUX",
+    "ISL",
+    "SVN",
+    "BIH",
+    "PRT",
+    "GIB",
+    "CYP",
+    "LVA",
+    "USA",
+    "CAN",
+    "AUS",
+    "NZL",
+]
 
 
 # To do: This should probably go to more general utils
@@ -161,7 +202,7 @@ def _process_keywords(keywords: List[str], separator: str = ",") -> List[List[st
     Returns:
         List[List[str]]: list of lists of keywords in the format ['keyword_1', ['keyword_2', 'keyword_3']]
     """
-    return [[word.strip() for word in line.split(separator)] for line in keywords]
+    return [[word.strip().replace("~", " ") for word in line.split(separator)] for line in keywords]
 
 
 def get_keywords(
@@ -298,39 +339,89 @@ def _enrich_org_total_funding_gbp(
     date_start = date_start or funding_rounds_enriched.announced_on.min()
     date_end = date_end or funding_rounds_enriched.announced_on.max()
 
+    # Total funding company has received minus grants
     funding_rounds_df = (
         funding_rounds_enriched.loc[
             funding_rounds_enriched["announced_on"].between(date_start, date_end, inclusive="both")
         ]
         .query("org_id in @organisation_ids")
+        .query("investment_type != 'grant'")
         .groupby("org_id")
         .agg(
-            total_funding_gbp=("raised_amount_gbp", "sum"),
-            num_rounds=("funding_round_id", "count"),
+            investment_funding_gbp=("raised_amount_gbp", "sum"),
+            num_investment_rounds=("funding_round_id", "count"),
+        )
+        .reindex(organisation_ids)
+        .reset_index()
+        .fillna(0)
+    )
+    # Grant funding
+    grant_funding_rounds_df = (
+        funding_rounds_enriched.loc[
+            funding_rounds_enriched["announced_on"].between(date_start, date_end, inclusive="both")
+        ]
+        .query("org_id in @organisation_ids")
+        .query("investment_type == 'grant'")
+        .groupby("org_id")
+        .agg(
+            grant_funding_gbp=("raised_amount_gbp", "sum"),
+            num_grants=("funding_round_id", "count"),
         )
         .reindex(organisation_ids)
         .reset_index()
         .fillna(0)
     )
 
-    return organisations.merge(funding_rounds_df, how="left", left_on="id", right_on="org_id").drop(columns="org_id")
+    return (
+        organisations.merge(funding_rounds_df, how="left", left_on="id", right_on="org_id")
+        .drop(columns="org_id")
+        .merge(grant_funding_rounds_df, how="left", left_on="id", right_on="org_id")
+        .drop(columns="org_id")
+        .assign(total_funding_gbp=lambda df: df["investment_funding_gbp"] + df["grant_funding_gbp"])
+    )
+
+
+def _step_function_decay(y: float, X: float) -> float:
+    """
+    Step function with exponential decay
+
+    Args:
+        y: input value (investment)
+        X: threshold for maximum investment
+    """
+    k = -np.log(0.1) / X
+    return np.where(y <= X, 1, np.exp(-k * (y - X)))
 
 
 def _enrich_org_investment_opportunity(organisations_enriched: pd.DataFrame) -> pd.DataFrame:
     """Enrich the organisations with investment opportunity tags"""
     # Check for valid employee count and country
-    valid_count_and_country = (organisations_enriched.employee_count_max <= 100) & (
-        organisations_enriched.country_code == "GBR"
-    )
+    valid_count = organisations_enriched.employee_count_max <= MAX_EMPLOYEE_COUNT
+    in_uk = organisations_enriched.country_code == "GBR"
+    in_countries_scope = organisations_enriched.country_code.isin(COUNTRIES_SCOPE)
     # Investment opportunities tags
-    potential_investment_opp = valid_count_and_country & (organisations_enriched.total_funding_gbp < 1e3)
-    investment_opp = (
-        valid_count_and_country
-        & (organisations_enriched.total_funding_gbp >= 1e3)
-        & (organisations_enriched.total_funding_gbp <= 5e3)
+    investment_opp_metric = (
+        organisations_enriched.total_funding_gbp.fillna(0)
+        .apply(lambda x: _step_function_decay(x, MAX_INVESTMENT))
+        .round(3)
     )
+    potential_investment_opp = (
+        valid_count & in_uk & (organisations_enriched.total_funding_gbp < MIN_INVESTMENT)
+    ).astype(int)
+    investment_opp = (valid_count & in_uk & (organisations_enriched.total_funding_gbp >= MIN_INVESTMENT)).astype(
+        int
+    ) * investment_opp_metric
+    investment_foreign_opp = (
+        valid_count
+        & in_countries_scope
+        # for foreign companies, have at least one funding round or grant
+        & ((organisations_enriched.num_investment_rounds > 0) | (organisations_enriched.num_grants > 0))
+    ).astype(int) * investment_opp_metric
     return organisations_enriched.assign(
-        potential_investment_opp=potential_investment_opp, investment_opp=investment_opp
+        potential_investment_opp=potential_investment_opp,
+        investment_opp=investment_opp,
+        interesting_foreign_opp=investment_foreign_opp,
+        investment_opp_metric=investment_opp_metric,
     )
 
 
@@ -372,6 +463,7 @@ def _find_keyword_hits(keywords: List[List[str]], sentences: List[str]) -> List[
     for text in sentences:
         keyword_hits = True
         for keyword in keywords:
+            # Note that we are looking for exact matches
             keyword_hits = keyword_hits and (keyword in text)
         hits.append(False or keyword_hits)
     return hits
@@ -403,8 +495,11 @@ def _enrich_keyword_labels(
     sentences, sentence_ids = _split_sentences(text_df.text.to_list(), text_df.id.to_list())
     sentence_ids = np.array(sentence_ids)
     # General terms
-    general_terms = None
+    general_term_ids = None
 
+    # to do: first check which texts that contain any general terms
+
+    # Then check for the specific, non-general terms
     hits_df = []
     for topic in subcategory_to_keywords:
         hits = []
@@ -419,28 +514,28 @@ def _enrich_keyword_labels(
             continue
         # Get corresponding unique ids
         hit_ids = set(sentence_ids[hits_indices])
-        # Check if this was 'general terms' topic
+        # Check if these are general terms and keywords
         if "general terms" in topic:
-            general_terms = hit_ids.copy()
-
-        # Save to a dataframe
-        hits_df.append(
-            pd.DataFrame(
-                data={
-                    "id": list(hit_ids),
-                    "topic_label": topic,
-                }
+            general_term_ids = hit_ids.copy()
+        else:
+            # Save to a dataframe
+            hits_df.append(
+                pd.DataFrame(
+                    data={
+                        "id": list(hit_ids),
+                        "topic_label": topic,
+                    }
+                )
             )
-        )
     if len(hits_df) == 0:
-        return pd.DataFrame(columns=["id", "topic_label"])
+        return pd.DataFrame(columns=["id", "topic_label", "mission_label"])
     else:
         hits_df = pd.concat(hits_df, ignore_index=True).assign(mission_label=keyword_type)
         # Filter noise using general mission topic area terms
-        if general_terms is None:
+        if general_term_ids is None:
             return hits_df
         else:
-            return hits_df.query("id in @general_terms").reset_index(drop=True)
+            return hits_df.query("id in @general_term_ids").reset_index(drop=True)
 
 
 def _transform_labels_df(
@@ -467,6 +562,7 @@ def enrich_organisations(
     funding_rounds_enriched: pd.DataFrame,
     organisation_descriptions: pd.DataFrame,
     organisation_ids: Iterator[str] = None,
+    enrich_labels: bool = True,
 ) -> pd.DataFrame:
     """Enrich organisation data"""
     # If no IDs are specified, assume all organisations are needed
@@ -481,8 +577,11 @@ def enrich_organisations(
         .pipe(_enrich_org_smart_money, funding_rounds_enriched=funding_rounds_enriched)
     )
 
-    topic_labels = _enrich_topic_labels(organisations_enriched, organisation_descriptions)
-    return organisations_enriched.merge(topic_labels, how="left", on="id")
+    if enrich_labels:
+        topic_labels = _enrich_topic_labels(organisations_enriched, organisation_descriptions)
+        return organisations_enriched.merge(topic_labels, how="left", on="id")
+    else:
+        return organisations_enriched
 
 
 def _enrich_topic_labels(

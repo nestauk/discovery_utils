@@ -432,7 +432,7 @@ def _enrich_org_has_smart_money(
     """Enrich the organisations with smart money tag"""
     # find orgs that have received smart money
     smart_money_orgs = funding_rounds_enriched.query("smart_money").org_id.unique()
-    return organisations.assign(has_smart_money=lambda df: df.id.isin(smart_money_orgs))
+    return organisations.assign(smart_money=lambda df: df.id.isin(smart_money_orgs))
 
 
 def _enrich_org_is_smart_money(
@@ -454,11 +454,11 @@ def _enrich_org_is_smart_money(
     auto_ids = set(
         funding_rounds_enriched.query("smart_money_auto == True").investor_id.drop_duplicates()
     ).intersection(set(relevant_org_ids))
-    smart_money_df = pd.DataFrame(data={"id": list(set(manual_ids).union(auto_ids)), "smart_money": True})
+    smart_money_df = pd.DataFrame(data={"id": list(set(manual_ids).union(auto_ids)), "smart_money_investor": True})
     return (
         organisations_enriched.merge(smart_money_df, how="left", on="id")
-        .astype({"smart_money": "boolean"})
-        .fillna({"smart_money": False})
+        .astype({"smart_money_investor": "boolean"})
+        .fillna({"smart_money_investor": False})
     )
 
 
@@ -606,13 +606,10 @@ def enrich_organisations(
 
     if enrich_labels:
         topic_labels = _enrich_topic_labels(organisations_enriched, organisation_descriptions)
-        return (
-            organisations_enriched.merge(topic_labels, how="left", on="id").pipe(
-                _enrich_org_is_smart_money,
-                funding_rounds_enriched=funding_rounds_enriched,
-                filter_mission_relevant=True,
-            )
-            # refine the smart money tag
+        return organisations_enriched.merge(topic_labels, how="left", on="id").pipe(
+            _enrich_org_is_smart_money,
+            funding_rounds_enriched=funding_rounds_enriched,
+            filter_mission_relevant=True,
         )
     else:
         return organisations_enriched.pipe(

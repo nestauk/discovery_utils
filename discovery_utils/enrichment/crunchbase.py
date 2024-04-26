@@ -447,7 +447,7 @@ def _enrich_org_is_smart_money(
             organisations_enriched.mission_labels.fillna("").str.contains("|".join(["ASF", "AHL", "AFS"]))
         ].id.to_list()
     else:
-        relevant_org_ids = organisations_enriched.org_id.unique()
+        relevant_org_ids = organisations_enriched.id.unique()
     # Investors manually set as smart money (keep all)
     manual_ids = funding_rounds_enriched.query("smart_money_manual == True").investor_id.drop_duplicates().to_list()
     # Automatically detected smart money investors (keep only relevant ones)

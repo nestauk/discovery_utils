@@ -425,14 +425,41 @@ def _enrich_org_investment_opportunity(organisations_enriched: pd.DataFrame) -> 
     )
 
 
-def _enrich_org_smart_money(
+def _enrich_org_has_smart_money(
     organisations: pd.DataFrame,
     funding_rounds_enriched: pd.DataFrame,
 ) -> pd.DataFrame:
     """Enrich the organisations with smart money tag"""
     # find orgs that have received smart money
     smart_money_orgs = funding_rounds_enriched.query("smart_money").org_id.unique()
-    return organisations.assign(smart_money=lambda df: df.id.isin(smart_money_orgs))
+    return organisations.assign(has_smart_money=lambda df: df.id.isin(smart_money_orgs))
+
+
+def _enrich_org_is_smart_money(
+    organisations_enriched: pd.DataFrame,
+    funding_rounds_enriched: pd.DataFrame,
+    filter_mission_relevant: bool = True,
+) -> pd.DataFrame:
+    """Enrich the organisations with investor smart money tag"""
+    # Organisations relevant to one of our missions
+    if filter_mission_relevant:
+        relevant_org_ids = organisations_enriched[
+            organisations_enriched.mission_labels.fillna("").str.contains("|".join(["ASF", "AHL", "AFS"]))
+        ].id.to_list()
+    else:
+        relevant_org_ids = organisations_enriched.org_id.unique()
+    # Investors manually set as smart money (keep all)
+    manual_ids = funding_rounds_enriched.query("smart_money_manual == True").investor_id.drop_duplicates().to_list()
+    # Automatically detected smart money investors (keep only relevant ones)
+    auto_ids = set(
+        funding_rounds_enriched.query("smart_money_auto == True").investor_id.drop_duplicates()
+    ).intersection(set(relevant_org_ids))
+    smart_money_df = pd.DataFrame(data={"id": list(set(manual_ids).union(auto_ids)), "smart_money": True})
+    return (
+        organisations_enriched.merge(smart_money_df, how="left", on="id")
+        .astype({"smart_money": "boolean"})
+        .fillna({"smart_money": False})
+    )
 
 
 def _split_sentences(texts: list, ids: list) -> Tuple[List]:
@@ -574,14 +601,23 @@ def enrich_organisations(
         .assign(employee_count_max=lambda df: df["employee_count"].apply(_process_max_employees))
         .pipe(_enrich_org_total_funding_gbp, funding_rounds_enriched=funding_rounds_enriched)
         .pipe(_enrich_org_investment_opportunity)
-        .pipe(_enrich_org_smart_money, funding_rounds_enriched=funding_rounds_enriched)
+        .pipe(_enrich_org_has_smart_money, funding_rounds_enriched=funding_rounds_enriched)
     )
 
     if enrich_labels:
         topic_labels = _enrich_topic_labels(organisations_enriched, organisation_descriptions)
-        return organisations_enriched.merge(topic_labels, how="left", on="id")
+        return (
+            organisations_enriched.merge(topic_labels, how="left", on="id").pipe(
+                _enrich_org_is_smart_money,
+                funding_rounds_enriched=funding_rounds_enriched,
+                filter_mission_relevant=True,
+            )
+            # refine the smart money tag
+        )
     else:
-        return organisations_enriched
+        return organisations_enriched.pipe(
+            _enrich_org_is_smart_money, funding_rounds_enriched=funding_rounds_enriched, filter_mission_relevant=False
+        )
 
 
 def _enrich_topic_labels(

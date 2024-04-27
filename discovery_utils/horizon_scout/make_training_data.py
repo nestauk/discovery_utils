@@ -19,6 +19,8 @@ class DataPaths:
         "AFS_POS": f"{classifier_inputs}/positive_samples_afs.csv",
         "AHL_POS": f"{classifier_inputs}/positive_samples_ahl.csv",
         "ASF_POS": f"{classifier_inputs}/positive_samples_asf.csv",
+        "CB_ORGS": "data/crunchbase/Crunchbase_2024-04-17/organizations.parquet",
+        "GTR_PROJECTS": "data/GtR/GtR_20240109/gtr_projects.json",
         "AFS_EXTRA": f"{classifier_inputs}/relevance_labels_eval_annotated_afs.jsonl",
         "AFS_TRAIN": f"{classifier_outputs}/training_data_afs.csv",
         "AHL_TRAIN": f"{classifier_outputs}/training_data_ahl.csv",
@@ -103,7 +105,7 @@ if __name__ == "__main__":
         s3._download_obj(
             s3_client=client,
             bucket=s3.BUCKET_NAME_RAW,
-            path_from="data/crunchbase/Crunchbase_2024-04-17/organizations.parquet",
+            path_from=DataPaths.paths["CB_ORGS"],
             download_as="dataframe",
         )
         .query("short_description.notna()")[["id", "short_description"]]
@@ -114,7 +116,7 @@ if __name__ == "__main__":
     gtr_projects_dict = s3._download_obj(
         s3_client=client,
         bucket=s3.BUCKET_NAME_RAW,
-        path_from="data/GtR/GtR_20240109/gtr_projects.json",
+        path_from=DataPaths.paths["GTR_PROJECTS"],
         download_as="dict",
     )
     gtr_projects = pd.DataFrame([{"id": item["id"], "text": item["abstractText"]} for item in gtr_projects_dict])

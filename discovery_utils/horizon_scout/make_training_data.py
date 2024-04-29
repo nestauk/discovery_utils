@@ -4,6 +4,7 @@ from typing import List
 import pandas as pd
 
 from discovery_utils.utils import s3
+from discovery_utils.utils.embeddings import add_embeddings
 
 
 client = s3.s3_client()
@@ -157,6 +158,11 @@ if __name__ == "__main__":
 
     # Add extra training data to AFS
     afs_training_data = pd.concat([afs_training_data, afs_extra_training_data])
+
+    # Add embeddings to each dataset
+    afs_training_data = add_embeddings(afs_training_data)
+    ahl_training_data = add_embeddings(ahl_training_data)
+    asf_training_data = add_embeddings(asf_training_data)
 
     # Save training datasets to s3
     s3.upload_obj(afs_training_data, s3.BUCKET_NAME_RAW, DataPaths.paths["AFS_TRAIN"])

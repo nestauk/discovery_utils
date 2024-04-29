@@ -25,6 +25,7 @@ df2gspread = "^1.0.4"
 python-dotenv = "^1.0.1"
 nltk = "^3.8.1"
 matplotlib = "^3.8.4"
+sentence-transformers = "^2.7.0"
 
 
 [tool.poetry.group.test]

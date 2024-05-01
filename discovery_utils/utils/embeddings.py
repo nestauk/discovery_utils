@@ -15,10 +15,10 @@ def add_embeddings(df: pd.DataFrame, text_col: str = "text", model_name: str = "
         model_name (str): Name of the sentence transformer model to use.
 
     Returns:
-        pd.DataFrame: The original DataFrame with two new columns: 'embedding' and 'model_name'.
+        pd.DataFrame: The original DataFrame with two new columns: 'embedding' and 'embedding_model'.
     """
     model = SentenceTransformer(model_name)
     embeddings = model.encode(df[text_col].tolist(), show_progress_bar=True)
     df["embedding"] = list(embeddings)
-    df["model_name"] = model_name
+    df["embedding_model"] = model_name
     return df

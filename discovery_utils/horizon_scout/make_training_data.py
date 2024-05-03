@@ -45,7 +45,7 @@ def load_and_process_positive_training_data(s3_path: str) -> pd.DataFrame:
         s3._download_obj(s3_client=client, bucket=s3.BUCKET_NAME_RAW, path_from=s3_path, download_as="dataframe")[
             ["id", "text"]
         ]
-        .dropna(subset=["id"])
+        .dropna(subset=["id", "text"])
         .drop_duplicates(subset=["id"])
         .assign(relevant=1)
         .reset_index(drop=True)

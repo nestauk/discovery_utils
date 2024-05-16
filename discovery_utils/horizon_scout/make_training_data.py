@@ -29,6 +29,26 @@ class DataPaths:
     }
 
 
+def drop_duplicates_by_text_length(df: pd.DataFrame, id_col: str, text_col: str) -> pd.DataFrame:
+    """
+    Drop duplicate rows based on the 'id' column while keeping the row with the longest 'text' column.
+
+    Args:
+        df (pd.DataFrame): The DataFrame to process.
+        id_col (str): The name of the column to identify duplicates.
+        text_col (str): The name of the column used to determine which duplicate to keep.
+
+    Returns:
+        pd.DataFrame: A DataFrame with duplicates dropped based on the criteria.
+
+    """
+    # Group by 'id' and find the index of the row with the longest 'text' in each group
+    idx = df.groupby(id_col)[text_col].apply(lambda x: x.idxmax())
+
+    # Return the rows corresponding to these indices
+    return df.loc[idx].reset_index(drop=True)
+
+
 def load_and_process_positive_training_data(s3_path: str) -> pd.DataFrame:
     """
     Load and preprocess the positive training data from a CSV file from S3.
@@ -46,7 +66,7 @@ def load_and_process_positive_training_data(s3_path: str) -> pd.DataFrame:
             ["id", "text"]
         ]
         .dropna(subset=["id", "text"])
-        .drop_duplicates(subset=["id"])
+        .pipe(drop_duplicates_by_text_length, "id", "text")
         .assign(relevant=1)
         .reset_index(drop=True)
     )
@@ -64,7 +84,13 @@ def make_negative_training_data(data: pd.DataFrame, random_state: int, n_samples
     Returns:
         pd.DataFrame: A DataFrame of sampled negative data, with a 'relevant' column set to 0.
     """
-    return data.sample(n=n_samples, random_state=random_state).assign(relevant=0).reset_index(drop=True)
+    return (
+        data.sample(n=n_samples, random_state=random_state)
+        .dropna(subset=["id", "text"])
+        .query("text != 'NA'")
+        .assign(relevant=0)
+        .reset_index(drop=True)
+    )
 
 
 def make_training_data(
@@ -92,7 +118,7 @@ def make_training_data(
     for negative_data, negative_data_n_samples in zip(negative_data_list, negative_data_n_samples_list):
         negative_training_data = make_negative_training_data(negative_data, random_state, negative_data_n_samples)
         training_data.append(negative_training_data)
-    return pd.concat(training_data).reset_index(drop=True)
+    return pd.concat(training_data).dropna(subset=["id", "text"]).query("text != 'NA'").reset_index(drop=True)
 
 
 if __name__ == "__main__":
@@ -157,7 +183,7 @@ if __name__ == "__main__":
     )
 
     # Add extra training data to AFS
-    afs_training_data = pd.concat([afs_training_data, afs_extra_training_data])
+    afs_training_data = pd.concat([afs_training_data, afs_extra_training_data]).reset_index(drop=True)
 
     # Add embeddings to each dataset
     afs_training_data = add_embeddings(afs_training_data)

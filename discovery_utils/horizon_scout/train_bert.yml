@@ -1,7 +1,8 @@
 ---
 resources:
   cloud: aws
-  instance_type: g4dn.xlarge
+  #instance_type: g4dn.xlarge
+  instance_type: g5.xlarge
   region: eu-west-2
 envs:
   BUCKET_NAME_RAW: discovery-iss
@@ -13,6 +14,8 @@ setup: |
   export PATH="/home/ubuntu/.local/bin:$PATH"
   poetry install
 run: |
+  mkdir ~/models_tmp
   cd ~/sky_workdir
   export PATH="/home/ubuntu/.local/bin:$PATH"
   poetry run python discovery_utils/horizon_scout/train_bert.py
+  rm -r ~/models_tmp

@@ -1,7 +1,6 @@
 ---
 resources:
   cloud: aws
-  #instance_type: g4dn.xlarge
   instance_type: g5.xlarge
   region: eu-west-2
 envs:

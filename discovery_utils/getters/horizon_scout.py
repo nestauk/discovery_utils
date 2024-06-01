@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 
 from sklearn.svm import SVC
-from transformers import pipeline
+from transformers import PreTrainedModel
 
 from discovery_utils.horizon_scout.make_training_data import DataPaths
 from discovery_utils.utils import s3
@@ -67,19 +67,19 @@ def get_svc_model(mission: str, svc_model_filename: str) -> SVC:
     )
 
 
-def get_bert_classifier(mission: str, bert_classifier_filename: str) -> pipeline:
-    """Load BERT classifier from S3
+def get_bert_model(mission: str, bert_model_filename: str) -> PreTrainedModel:
+    """Load BERT model from S3
 
     Args:
         mission (str): Nesta mission ('AHL', 'AFS' or 'ASF')
-        model_filename (str): Filename on S3 e.g. 'AHL_bert_0.965_20240530-2244.pkl'
+        model_filename (str): Filename on S3 e.g. 'AHL_bert_model_0.965_20240530-2244.pkl'
 
     Returns:
-        pipeline: BERT classification pipeline
+        PreTrainedModel: BERT model
     """
     return s3._download_obj(
         s3_client=client,
         bucket=s3.BUCKET_NAME_RAW,
-        path_from=f"models/horizon_scout/{mission}/{bert_classifier_filename}",
+        path_from=f"models/horizon_scout/{mission}/{bert_model_filename}",
         download_as=None,
     )

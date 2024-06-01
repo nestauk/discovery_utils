@@ -17,7 +17,6 @@ from transformers import EarlyStoppingCallback
 from transformers import PreTrainedTokenizer
 from transformers import Trainer
 from transformers import TrainingArguments
-from transformers import pipeline
 
 from discovery_utils import logging
 from discovery_utils.getters.horizon_scout import get_training_data
@@ -39,7 +38,7 @@ def tokenize(df: pd.DataFrame, tokenizer: PreTrainedTokenizer) -> Dict[str, Any]
     Returns:
         Dict[str, Any]: A dictionary containing tokenized representations of the text data.
     """
-    return tokenizer(df["text"], truncation=True, max_length=512)
+    return tokenizer(df["text"], padding=True, truncation=True, max_length=512)
 
 
 def create_compute_metrics() -> Callable[[Tuple[np.ndarray, np.ndarray]], Dict[str, float]]:
@@ -144,37 +143,26 @@ def train_and_save_model(
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=2, early_stopping_threshold=0.0001)],
+        callbacks=[EarlyStoppingCallback(early_stopping_patience=3, early_stopping_threshold=0.0001)],
     )
     trainer.train()
-
-    # Store number of steps
-    global_step = trainer.state.global_step
 
     # Store eval_accuracy
     eval_results = trainer.evaluate()
     eval_accuracy = round(eval_results["eval_accuracy"], 3)
 
-    # Load model that can be used for inference
-    model_path = os.path.expanduser(f"~/models_tmp/{mission}_distillbert_{date_time}/checkpoint-{global_step}")
-    model = AutoModelForSequenceClassification.from_pretrained(model_path)
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    classifier = pipeline(
-        "text-classification", model=model, tokenizer=tokenizer, truncation=True, max_length=512, batch_size=batch_size
-    )
-
     # Save model to S3
-    save_path = f"models/horizon_scout/{mission}/{mission}_bert_{eval_accuracy}_{date_time}.pkl"
-    logging.info("Saving the %s classifier to %s", mission, save_path)
+    model_save_path = f"models/horizon_scout/{mission}/{mission}_bert_model_{eval_accuracy}_{date_time}.pkl"
+    logging.info("Saving the %s model to %s", mission, model_save_path)
     s3.upload_obj(
-        classifier,
+        trainer.model,
         s3.BUCKET_NAME_RAW,
-        save_path,
+        model_save_path,
     )
 
 
 MISSIONS = ["ASF", "AFS", "AHL"]
-EPOCHS = 10
+EPOCHS = 12
 ID2LABEL = {0: "NOT RELEVANT", 1: "RELEVANT"}
 LABEL2ID = {"NOT RELEVANT": 0, "RELEVANT": 1}
 BATCH_SIZE = 60

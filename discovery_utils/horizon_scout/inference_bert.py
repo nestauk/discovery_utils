@@ -1,9 +1,15 @@
 from typing import List
 
 import pandas as pd
+import torch
+
+from tqdm import tqdm
+from transformers import AutoTokenizer
+from transformers import PreTrainedModel
+from transformers import PreTrainedTokenizer
 
 from discovery_utils import logging
-from discovery_utils.getters.horizon_scout import get_bert_classifier
+from discovery_utils.getters.horizon_scout import get_bert_model
 from discovery_utils.utils import s3
 
 
@@ -12,71 +18,62 @@ logging.basicConfig(level=logging.INFO)
 client = s3.s3_client()
 
 
-def bert_predictions(mission: str, model_filename: str, df: pd.DataFrame, text_col: str, label2id: dict) -> list:
-    """Use BERT classifier to make a list of predictions
-
-    Args:
-       mission (str): Nesta mission ('AHL', 'AFS' or 'ASF').
-       model_filename (str): Filename on S3 e.g. 'AHL_bert_0.965_20240530-2244.pkl'
-       df (pd.DataFrame): Input DataFrame containing the text data.
-       text_col (str): Column name for the text in the DataFrame.
-       label2id (dict): Dict that maps label to id.
-
-    Returns:
-       list: List of predictions
-    """
-    # Load the classifier
-    bert_classifier = get_bert_classifier(mission, model_filename)
-
-    # Make predictions on the text data
-    texts = df[text_col].tolist()
-    predictions = bert_classifier(texts)
-
-    # Convert predictions to 0s and 1s using label2id
-    predicted_labels = [label2id[pred["label"]] for pred in predictions]
-
-    return predicted_labels
-
-
 def bert_add_predictions(
-    missions: List[str],
-    model_filenames: List[str],
     df: pd.DataFrame,
     text_col: str,
-    label2id: dict,
-    predictions_cols: List[str],
+    bert_models: List[PreTrainedModel],
+    tokenizer: PreTrainedTokenizer,
+    missions: List[str],
+    batch_size: int,
 ) -> pd.DataFrame:
-    """Use BERT classifier to add predictions to input DataFrame
+    """Add BERT predictions to input DataFrame containing text to classify as relevant to Nesta's missions or not.
 
     Args:
-       mission (str): Nesta mission ('AHL', 'AFS' or 'ASF').
-       model_filename (str): Filename on S3 e.g. 'AHL_bert_0.965_20240530-2244.pkl'
-       df (pd.DataFrame): Input DataFrame containing the text data.
-       text_col (str): Column name for the text in the DataFrame.
-       label2id (dict): Dict that maps label to id.
-       predictions_col (str): Column name to assign the predictions to.
+        df (pd.DataFrame): DataFrame containing the text to be classified.
+        text_col (str): Name of the column containing text data.
+        bert_models (List[PreTrainedModel]): List of BERT models.
+        tokenizer (PreTrainedTokenizer): BERT tokenizer.
+        missions (List[str]): List of mission names.
+        batch_size (int): Size of the batch for processing data.
 
     Returns:
-       pd.DataFrame: DataFrame with predictions from each mission classifier added.
+        pd.DataFrame: DataFrame with new columns containing classification predictions.
     """
-    for mission, model_filename, predictions_col in zip(missions, model_filenames, predictions_cols):
-        df[predictions_col] = bert_predictions(mission, model_filename, df, text_col, label2id)
+    total_batches = (len(df) + batch_size - 1) // batch_size
+
+    for i in tqdm(range(0, len(df), batch_size), total=total_batches, desc="Processing batches"):
+        batch_texts = df[text_col].iloc[i : i + batch_size].tolist()
+        tokenized = tokenizer(batch_texts, padding=True, truncation=True, max_length=512, return_tensors="pt")
+
+        batch_indices = range(i, min(i + batch_size, len(df)))
+
+        for bert_model, mission in zip(bert_models, missions):
+            col_name = f"{mission.lower()}_bert_preds"
+
+            # Ensure model and tokenized tensors are on the same device
+            if torch.cuda.is_available():
+                bert_model = bert_model.to("cuda")
+                tokenized = {key: value.to("cuda") for key, value in tokenized.items()}
+
+            # Make predictions
+            with torch.no_grad():
+                outputs = bert_model(**tokenized)
+                predictions = outputs.logits.argmax(dim=1).cpu().numpy()
+
+            df.loc[batch_indices, col_name] = predictions
+
     return df
 
 
-MISSIONS = [
-    "AHL",
-    "ASF",
-    "AFS",
-]
-MODEL_FILENAMES = [
-    "AHL_bert_0.965_20240530-2244.pkl",
-    "ASF_bert_0.931_20240530-2235.pkl",
-    "AFS_bert_0.979_20240530-2240.pkl",
-]
-PREDICTIONS_COLS = ["ahl_bert_preds", "asf_bert_preds", "afs_bert_preds"]
-LABEL2ID = {"NOT RELEVANT": 0, "RELEVANT": 1}
 SAVE_PATH = "data/crunchbase/enriched/organizations_new_only_with_bert_preds.csv"
+MISSIONS = ["AHL", "ASF", "AFS"]
+MODEL_PATHS = [
+    "AHL_bert_model_0.967_20240601-1441.pkl",
+    "ASF_bert_model_0.93_20240601-1434.pkl",
+    "AFS_bert_model_0.979_20240601-1438.pkl",
+]
+BATCH_SIZE = 512
+
 
 if __name__ == "__main__":
     logging.info("Downloading new Crunchbase companies")
@@ -87,15 +84,22 @@ if __name__ == "__main__":
         download_as="dataframe",
     )
 
+    bert_models = [get_bert_model(mission, model_path) for mission, model_path in zip(MISSIONS, MODEL_PATHS)]
+    tokenizer = AutoTokenizer.from_pretrained("distilbert/distilbert-base-uncased")
+
     logging.info("Adding BERT mission predictions")
     new_companies_with_predictions = bert_add_predictions(
-        missions=MISSIONS,
-        model_filenames=MODEL_FILENAMES,
         df=new_companies,
         text_col="short_description",
-        label2id=LABEL2ID,
-        predictions_cols=PREDICTIONS_COLS,
+        bert_models=bert_models,
+        tokenizer=tokenizer,
+        missions=MISSIONS,
+        batch_size=BATCH_SIZE,
     )
 
-    logging.info("Saving new Crunchbase companies with BERT mission predictios to %s", SAVE_PATH)
-    s3.upload_obj(new_companies_with_predictions, s3.BUCKET_NAME_RAW, SAVE_PATH)
+    logging.info("Saving new Crunchbase companies with BERT mission predictions to %s", SAVE_PATH)
+    s3.upload_obj(
+        new_companies_with_predictions,
+        s3.BUCKET_NAME_RAW,
+        SAVE_PATH,
+    )

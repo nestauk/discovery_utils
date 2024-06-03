@@ -72,7 +72,7 @@ MODEL_PATHS = [
     "ASF_bert_model_0.93_20240601-1434.pkl",
     "AFS_bert_model_0.979_20240601-1438.pkl",
 ]
-BATCH_SIZE = 512
+BATCH_SIZE = 2048
 
 
 if __name__ == "__main__":

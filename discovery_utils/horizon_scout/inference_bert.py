@@ -28,6 +28,8 @@ def bert_add_predictions(
 ) -> pd.DataFrame:
     """Add BERT predictions to input DataFrame containing text to classify as relevant to Nesta's missions or not.
 
+    Processes in batches, classifying text using a BERT model for each mission.
+
     Args:
         df (pd.DataFrame): DataFrame containing the text to be classified.
         text_col (str): Name of the column containing text data.
@@ -39,28 +41,26 @@ def bert_add_predictions(
     Returns:
         pd.DataFrame: DataFrame with new columns containing classification predictions.
     """
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    bert_models = [model.to(device) for model in bert_models]
     total_batches = (len(df) + batch_size - 1) // batch_size
+
+    predictions = {f"{mission.lower()}_bert_preds": [] for mission in missions}
 
     for i in tqdm(range(0, len(df), batch_size), total=total_batches, desc="Processing batches"):
         batch_texts = df[text_col].iloc[i : i + batch_size].tolist()
-        tokenized = tokenizer(batch_texts, padding=True, truncation=True, max_length=512, return_tensors="pt")
-
-        batch_indices = range(i, min(i + batch_size, len(df)))
+        tokenized = tokenizer(batch_texts, padding=True, truncation=True, max_length=512, return_tensors="pt").to(
+            device
+        )
 
         for bert_model, mission in zip(bert_models, missions):
-            col_name = f"{mission.lower()}_bert_preds"
-
-            # Ensure model and tokenized tensors are on the same device
-            if torch.cuda.is_available():
-                bert_model = bert_model.to("cuda")
-                tokenized = {key: value.to("cuda") for key, value in tokenized.items()}
-
-            # Make predictions
             with torch.no_grad():
                 outputs = bert_model(**tokenized)
-                predictions = outputs.logits.argmax(dim=1).cpu().numpy()
+                pred = outputs.logits.argmax(dim=1).cpu().numpy()
+            predictions[f"{mission.lower()}_bert_preds"].extend(pred)
 
-            df.loc[batch_indices, col_name] = predictions
+    for mission in missions:
+        df[f"{mission.lower()}_bert_preds"] = pd.Series(predictions[f"{mission.lower()}_bert_preds"])
 
     return df
 

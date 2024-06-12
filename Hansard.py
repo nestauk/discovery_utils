@@ -10,7 +10,7 @@ import re
 
 import pandas as pd
 
-from defusedxml import ElementTree as etree
+from lxml import etree  # nosec B3410
 
 
 # --------------------------------------------------------------------------------------------------------------------
@@ -27,9 +27,9 @@ def FilePaths(directory: str) -> list:
     """
 
     filenamelist = []
-    for dirpath, _, filenames in os.walk(directory):
-        for f in filenames:
-            filenamelist.append(os.path.join(dirpath, f))
+    for path, _, filenames in os.walk(directory):
+        for file in filenames:
+            filenamelist.append(os.path.join(path, file))
     return filenamelist
 
 
@@ -64,23 +64,11 @@ def extract_text(elem: object) -> str:
         text that belong to lmxl object
     """
     speech_text = ""
-    for t in elem:
-        # Process text node of t if it exists and t has no children
-        if len(list(t)) == 0 and t.text:
-            speech_text += t.text
-        else:
-            # Iterate over child elements of t
-            for p in t:
-                # Recursively process child elements of p
-                speech_text += extract_text([p])
-                # Process text node of p if it exists
-                if p.text:
-                    speech_text += p.text
-                # Process tail content of p if it exists
-                if p.tail:
-                    speech_text += p.tail
-                else:
-                    speech_text += " "
+    # Replace <br> tags with newlines
+    for br in elem.xpath(".//br"):
+        br.tail = " " + (br.tail if br.tail else "")
+    # Extract the full text content
+    speech_text = "".join(elem.xpath(".//text()"))
     return speech_text
 
 
@@ -133,17 +121,13 @@ def get_speeches(temp_list: list, current_year: str) -> list:
 
     data = []
     for item in temp_list:
-        # print(item)
-        parser = etree.XMLParser()
-        tree = etree.parse(item, parser)
-        # nodes_latest = tree.findall("//publicwhip")
-        # print(type(nodes_latest))
-        # print(len(nodes_latest))
+        parser = etree.XMLParser(dtd_validation=False)
+        tree = etree.parse(item, parser)  # nosec B320
+        # nodes_latest = tree.xpath("//publicwhip")
         # latest_values = [node.get("latest", "NA") for node in nodes_latest]
-        # print(type(latest_values))
 
         # condition1 = latest_values[0] == "yes"
-        condition2 = bool(tree.findall(".//minor-heading"))
+        condition2 = bool(tree.xpath("//minor-heading"))
 
         if condition2:
             root = tree.getroot()
@@ -194,6 +178,7 @@ def get_speeches(temp_list: list, current_year: str) -> list:
                             "date": date_current,
                         }
                     )
+
     return data
 
 
@@ -202,8 +187,8 @@ data_path = "/Users/rinskejongma/tryRcode/scrapedxml/debates"  # this is the pat
 list_of_datafiles = sorted(FilePaths(data_path))
 
 debates_per_year = []  # list that stores 25 each item in the lists has all the debates for one year.
-for year in range(2000, 2001):
-    # print("processing:", year)
+for year in range(2000, 2025):
+    print("processing:", year)  # noqa:<T001>
 
     # Get all the debates that belong to one year
     one_year_list = select_debates_per_year(list_of_datafiles, str(year), "/debates/debates")
@@ -214,4 +199,3 @@ for year in range(2000, 2001):
 
 # Store the data into dataframes
 all_debates = create_dataframe(debates_per_year)
-df_ = all_debates[0]

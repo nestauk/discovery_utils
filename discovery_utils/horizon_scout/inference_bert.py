@@ -19,6 +19,26 @@ logging.basicConfig(level=logging.INFO)
 
 client = s3.s3_client()
 
+# MISSIONS and MODEL_PATHS need to be in the same order
+MISSIONS = ["AHL", "ASF", "AFS"]
+MODEL_PATHS = [
+    "AHL_bert_model_0.896_20240618-2156.pkl",
+    "ASF_bert_model_0.925_20240618-2146.pkl",
+    "AFS_bert_model_0.971_20240618-2152.pkl",
+]
+
+BATCH_SIZE = 512
+
+LABEL_STORE_PATH = "data/crunchbase/enriched/label_store.csv"
+NEW_ORGS_PATH = "data/crunchbase/enriched/organizations_new_only.parquet"
+FULL_ORGS_PATH = "data/crunchbase/enriched/organizations_full.parquet"
+
+LABEL_TYPE = "BERT classifiers 20240618"
+DATASET_NAME = "Crunchbase"
+
+# MODE = "Full"
+MODE = "New"
+
 
 def bert_add_predictions(
     df: pd.DataFrame,
@@ -89,15 +109,7 @@ def preds_to_labels(df: pd.DataFrame, missions: List[str]) -> pd.DataFrame:
 
 
 def check_file_exists(path: str) -> bool:
-    """Check if a file exists in an S3 bucket.
-
-    Args:
-        path (str): Path of the file within the bucket.
-
-    Returns:
-        bool: True if the file exists, False otherwise.
-    """
-
+    """Check if a file exists in an S3 bucket."""
     try:
         client.head_object(Bucket=s3.BUCKET_NAME_RAW, Key=path)
         return True
@@ -108,78 +120,54 @@ def check_file_exists(path: str) -> bool:
             raise e
 
 
-MISSIONS = ["AHL", "ASF", "AFS"]
-MODEL_PATHS = [
-    "AHL_bert_model_0.896_20240618-2156.pkl",
-    "ASF_bert_model_0.925_20240618-2146.pkl",
-    "AFS_bert_model_0.971_20240618-2152.pkl",
-]
-BATCH_SIZE = 512
+def download_df(path: str) -> pd.DataFrame:
+    """Download data from S3."""
+    return s3._download_obj(
+        s3_client=client,
+        bucket=s3.BUCKET_NAME_RAW,
+        path_from=path,
+        download_as="dataframe",
+    )
 
-LABEL_STORE_PATH = "data/crunchbase/enriched/label_store.csv"
-NEW_ORGS_PATH = "data/crunchbase/enriched/organizations_new_only.parquet"
-FULL_ORGS_PATH = "data/crunchbase/enriched/organizations_full.parquet"
 
-LABEL_TYPE = "BERT classifiers 20240618"
-DATASET_NAME = "Crunchbase"
+def upload_df(df: pd.DataFrame, path: str) -> None:
+    """Upload data to S3."""
+    s3.upload_obj(df, s3.BUCKET_NAME_RAW, path, kwargs_writing={"index": False})
 
-MODE = "Full"
-MODE = "New"
+
+def load_models(model_paths: List[str], missions: List[str]) -> List[PreTrainedModel]:
+    """Load BERT models."""
+    return [get_bert_model(mission, model_path) for mission, model_path in zip(missions, model_paths)]
 
 
 if __name__ == "__main__":
-    # Set data path
-    if MODE == "Full":
-        data_path = FULL_ORGS_PATH
-    elif MODE == "New":
-        data_path = NEW_ORGS_PATH
-
-    # Load data
-    logging.info("Downloading Crunchbase companies")
-    companies = s3._download_obj(
-        s3_client=client,
-        bucket=s3.BUCKET_NAME_RAW,
-        path_from=data_path,
-        download_as="dataframe",
-    )[["id", "short_description"]]
-
-    # Load models
-    bert_models = [get_bert_model(mission, model_path) for mission, model_path in zip(MISSIONS, MODEL_PATHS)]
+    # Load models and tokenizer
+    bert_models = load_models(MODEL_PATHS, MISSIONS)
     tokenizer = AutoTokenizer.from_pretrained("distilbert/distilbert-base-uncased")
 
-    # Perform inference
-    logging.info("Adding BERT mission predictions")
-    companies = bert_add_predictions(
-        df=companies,
-        text_col="short_description",
-        bert_models=bert_models,
-        tokenizer=tokenizer,
-        missions=MISSIONS,
-        batch_size=BATCH_SIZE,
+    # Set companies data path
+    data_path = FULL_ORGS_PATH if MODE == "Full" else NEW_ORGS_PATH
+
+    # Load data and process companies
+    logging.info("Downloading Crunchbase companies")
+    companies = (
+        download_df(data_path)[["id", "short_description"]]
+        .pipe(
+            bert_add_predictions,
+            text_col="short_description",
+            bert_models=bert_models,
+            tokenizer=tokenizer,
+            missions=MISSIONS,
+            batch_size=BATCH_SIZE,
+        )
+        .pipe(preds_to_labels, missions=MISSIONS)
+        .assign(label_type=LABEL_TYPE, label_date=get_current_datetime(), dataset=DATASET_NAME)
     )
-
-    # Convert binary predictions to labels
-    companies = preds_to_labels(companies, MISSIONS)
-
-    # Add label type col
-    companies["label_type"] = LABEL_TYPE
-
-    # Add label date col
-    current_datetime = get_current_datetime()
-    companies["label_date"] = current_datetime
-
-    # Add dataset col
-    companies["dataset"] = DATASET_NAME
 
     # Append to datastore, if file does not exist then create
     if check_file_exists(LABEL_STORE_PATH):
-        label_store = s3._download_obj(
-            s3_client=client,
-            bucket=s3.BUCKET_NAME_RAW,
-            path_from=LABEL_STORE_PATH,
-            download_as="dataframe",
-        )
+        label_store = download_df(LABEL_STORE_PATH)
         label_store = pd.concat([label_store, companies], ignore_index=True).reset_index(drop=True)
-        s3.upload_obj(label_store, s3.BUCKET_NAME_RAW, LABEL_STORE_PATH, kwargs_writing={"index": False})
+        upload_df(label_store, LABEL_STORE_PATH)
     else:
-        s3.upload_obj(companies, s3.BUCKET_NAME_RAW, LABEL_STORE_PATH, kwargs_writing={"index": False})
+        upload_df(companies, LABEL_STORE_PATH)

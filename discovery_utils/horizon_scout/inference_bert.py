@@ -9,13 +9,10 @@ from transformers import AutoTokenizer
 from transformers import PreTrainedModel
 from transformers import PreTrainedTokenizer
 
-from discovery_utils import logging
 from discovery_utils.getters.horizon_scout import get_bert_model
 from discovery_utils.horizon_scout.utils import get_current_datetime
 from discovery_utils.utils import s3
 
-
-logging.basicConfig(level=logging.INFO)
 
 client = s3.s3_client()
 
@@ -33,8 +30,10 @@ LABEL_STORE_PATH = "data/crunchbase/enriched/label_store.csv"
 NEW_ORGS_PATH = "data/crunchbase/enriched/organizations_new_only.parquet"
 FULL_ORGS_PATH = "data/crunchbase/enriched/organizations_full.parquet"
 
+# Value to set for the `label_type` column
 LABEL_TYPE = "BERT classifiers 20240618"
-DATASET_NAME = "Crunchbase"
+# Value to set for the `dataset` column
+DATASET = "Crunchbase"
 
 # MODE = "Full"
 MODE = "New"
@@ -149,7 +148,6 @@ if __name__ == "__main__":
     data_path = FULL_ORGS_PATH if MODE == "Full" else NEW_ORGS_PATH
 
     # Load data and process companies
-    logging.info("Downloading Crunchbase companies")
     companies = (
         download_df(data_path)[["id", "short_description"]]
         .pipe(
@@ -161,7 +159,7 @@ if __name__ == "__main__":
             batch_size=BATCH_SIZE,
         )
         .pipe(preds_to_labels, missions=MISSIONS)
-        .assign(label_type=LABEL_TYPE, label_date=get_current_datetime(), dataset=DATASET_NAME)
+        .assign(label_type=LABEL_TYPE, label_date=get_current_datetime(), dataset=DATASET)
     )
 
     # Append to datastore, if file does not exist then create

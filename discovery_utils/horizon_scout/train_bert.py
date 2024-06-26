@@ -27,6 +27,12 @@ from discovery_utils.utils import s3
 
 logging.basicConfig(level=logging.INFO)
 
+MISSIONS = ["ASF", "AFS", "AHL"]
+EPOCHS = 12
+ID2LABEL = {0: "NOT RELEVANT", 1: "RELEVANT"}
+LABEL2ID = {"NOT RELEVANT": 0, "RELEVANT": 1}
+BATCH_SIZE = 60
+
 
 def tokenize(df: pd.DataFrame, tokenizer: PreTrainedTokenizer) -> Dict[str, Any]:
     """Preprocesse the text data in a DataFrame using a specified tokenizer.
@@ -160,12 +166,6 @@ def train_and_save_model(
         model_save_path,
     )
 
-
-MISSIONS = ["ASF", "AFS", "AHL"]
-EPOCHS = 12
-ID2LABEL = {0: "NOT RELEVANT", 1: "RELEVANT"}
-LABEL2ID = {"NOT RELEVANT": 0, "RELEVANT": 1}
-BATCH_SIZE = 60
 
 if __name__ == "__main__":
     for mission in MISSIONS:

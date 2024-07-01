@@ -19,9 +19,9 @@ client = s3.s3_client()
 # MISSIONS and MODEL_PATHS need to be in the same order
 MISSIONS = ["AHL", "ASF", "AFS"]
 MODEL_PATHS = [
-    "AHL_bert_model_0.896_20240620-1008.pkl",
-    "ASF_bert_model_0.913_20240620-0957.pkl",
-    "AFS_bert_model_0.971_20240620-1001.pkl",
+    "AHL_bert_model_0.916_20240629-1806.pkl",
+    "ASF_bert_model_0.946_20240629-1753.pkl",
+    "AFS_bert_model_0.964_20240629-1759.pkl",
 ]
 
 BATCH_SIZE = 512
@@ -31,7 +31,7 @@ NEW_ORGS_PATH = "data/crunchbase/enriched/organizations_new_only.parquet"
 FULL_ORGS_PATH = "data/crunchbase/enriched/organizations_full.parquet"
 
 # Value to set for the `label_type` column
-LABEL_TYPE = "BERT classifiers 20240620"
+LABEL_TYPE = "BERT classifiers 20240629"
 # Value to set for the `dataset` column
 DATASET = "Crunchbase"
 

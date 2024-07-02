@@ -14,6 +14,10 @@ from discovery_utils.horizon_scout.utils import get_current_datetime
 from discovery_utils.utils import s3
 
 
+# Suppress SettingWithCopyWarning
+pd.options.mode.chained_assignment = None
+
+
 client = s3.s3_client()
 
 # MISSIONS and MODEL_PATHS need to be in the same order
@@ -24,19 +28,20 @@ MODEL_PATHS = [
     "AFS_bert_model_0.964_20240629-1759.pkl",
 ]
 
-BATCH_SIZE = 512
+BATCH_SIZE = 60
+CHUNK_SIZE = 5_000
 
 LABEL_STORE_PATH = "data/crunchbase/enriched/label_store.csv"
 NEW_ORGS_PATH = "data/crunchbase/enriched/organizations_new_only.parquet"
 FULL_ORGS_PATH = "data/crunchbase/enriched/organizations_full.parquet"
 
-# Value to set for the `label_type` column
+# Value to set for the label_type column
 LABEL_TYPE = "BERT classifiers 20240629"
-# Value to set for the `dataset` column
+# Value to set for the dataset column
 DATASET = "Crunchbase"
 
-# MODE = "Full"
-MODE = "New"
+MODE = "Full"
+# MODE = "New"
 
 
 def bert_add_predictions(
@@ -64,12 +69,12 @@ def bert_add_predictions(
     """
     df = df.dropna(subset=text_col)
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    bert_models = [model.to(device) for model in bert_models]
+    bert_models = [model.eval().to(device) for model in bert_models]
     total_batches = (len(df) + batch_size - 1) // batch_size
 
     predictions = {f"{mission.lower()}_bert_preds": [] for mission in missions}
 
-    for i in tqdm(range(0, len(df), batch_size), total=total_batches, desc="Processing batches"):
+    for i in tqdm(range(0, len(df), batch_size), total=total_batches, desc="Processing batches", leave=False):
         batch_texts = df[text_col].iloc[i : i + batch_size].tolist()
         tokenized = tokenizer(batch_texts, padding=True, truncation=True, max_length=512, return_tensors="pt").to(
             device
@@ -82,8 +87,7 @@ def bert_add_predictions(
             predictions[f"{mission.lower()}_bert_preds"].extend(pred)
 
     for mission in missions:
-        df[f"{mission.lower()}_bert_preds"] = pd.Series(predictions[f"{mission.lower()}_bert_preds"])
-
+        df[f"{mission.lower()}_bert_preds"] = predictions[f"{mission.lower()}_bert_preds"]
     return df
 
 
@@ -148,19 +152,24 @@ if __name__ == "__main__":
     data_path = FULL_ORGS_PATH if MODE == "Full" else NEW_ORGS_PATH
 
     # Load data and process companies
-    companies = (
-        download_df(data_path)[["id", "short_description"]]
-        .pipe(
-            bert_add_predictions,
-            text_col="short_description",
-            bert_models=bert_models,
-            tokenizer=tokenizer,
-            missions=MISSIONS,
-            batch_size=BATCH_SIZE,
+    companies = download_df(data_path)[["id", "short_description"]]
+    chunked_companies = []
+    for i in tqdm(range(0, len(companies), CHUNK_SIZE), desc="Processing chunks"):
+        chunk = companies.iloc[i : i + CHUNK_SIZE]
+        chunk = (
+            chunk.pipe(
+                bert_add_predictions,
+                text_col="short_description",
+                bert_models=bert_models,
+                tokenizer=tokenizer,
+                missions=MISSIONS,
+                batch_size=BATCH_SIZE,
+            )
+            .pipe(preds_to_labels, missions=MISSIONS)
+            .assign(label_type=LABEL_TYPE, label_date=get_current_datetime(), dataset=DATASET)
         )
-        .pipe(preds_to_labels, missions=MISSIONS)
-        .assign(label_type=LABEL_TYPE, label_date=get_current_datetime(), dataset=DATASET)
-    )
+        chunked_companies.append(chunk)
+    companies = pd.concat(chunked_companies, ignore_index=True)
 
     # Append to datastore, if file does not exist then create
     if check_file_exists(LABEL_STORE_PATH):

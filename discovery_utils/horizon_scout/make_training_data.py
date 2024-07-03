@@ -23,6 +23,9 @@ class DataPaths:
         "CB_ORGS": "data/crunchbase/Crunchbase_2024-04-17/organizations.parquet",
         "GTR_PROJECTS": "data/GtR/GtR_20240109/gtr_projects.json",
         "AFS_EXTRA": f"{classifier_inputs}/relevance_labels_eval_annotated_afs.jsonl",
+        "AHL_NEG": f"{classifier_inputs}/negative_samples_ahl.csv",
+        "AFS_NEG": f"{classifier_inputs}/negative_samples_afs.csv",
+        "ASF_NEG": f"{classifier_inputs}/negative_samples_asf.csv",
         "AFS_TRAIN": f"{classifier_outputs}/training_data_afs.csv",
         "AHL_TRAIN": f"{classifier_outputs}/training_data_ahl.csv",
         "ASF_TRAIN": f"{classifier_outputs}/training_data_asf.csv",
@@ -121,13 +124,40 @@ def make_training_data(
     return pd.concat(training_data).dropna(subset=["id", "text"]).query("text != 'NA'").reset_index(drop=True)
 
 
+def load_and_replace_negative_data(
+    path_key: str, training_data: pd.DataFrame, column_name: str = "short_description"
+) -> pd.DataFrame:
+    """
+    Load extra negative training data, drop a portion of existing negatives, and replace them in the training dataset.
+
+    Args:
+        path_key (str): Key to access the S3 path for the extra negative data.
+        training_data (pd.DataFrame): Existing training data to update.
+        column_name (str): The column name to rename to 'text' in the downloaded data.
+
+    Returns:
+        pd.DataFrame: Updated training data with the new negatives added.
+    """
+    extra_negative_training_data = (
+        s3._download_obj(
+            s3_client=client, bucket=s3.BUCKET_NAME_RAW, path_from=DataPaths.paths[path_key], download_as="dataframe"
+        )
+        .assign(relevant=0)
+        .reset_index(drop=True)
+        .rename(columns={column_name: "text"})
+    )
+
+    neg_idxs_to_drop = training_data[training_data["relevant"] == 0].index[: len(extra_negative_training_data)]
+    return pd.concat([training_data.drop(index=neg_idxs_to_drop), extra_negative_training_data]).reset_index(drop=True)
+
+
 if __name__ == "__main__":
     # Load positive training data
     afs_positive_training_data = load_and_process_positive_training_data(DataPaths.paths["AFS_POS"])
     ahl_positive_training_data = load_and_process_positive_training_data(DataPaths.paths["AHL_POS"])
     asf_positive_training_data = load_and_process_positive_training_data(DataPaths.paths["ASF_POS"])
 
-    # Load crunchbase orgs data which will used to sample negative training data
+    # Load crunchbase orgs data which will be used to sample negative training data
     cb_orgs = (
         s3._download_obj(
             s3_client=client,
@@ -170,7 +200,12 @@ if __name__ == "__main__":
         random_state=3,
     )
 
-    # Create extra training data for AFS from ISS 3
+    # Make new training data by dropping some negatives and replacing with specific neg training data
+    afs_training_data = load_and_replace_negative_data("AFS_NEG", afs_training_data)
+    ahl_training_data = load_and_replace_negative_data("AHL_NEG", ahl_training_data)
+    asf_training_data = load_and_replace_negative_data("ASF_NEG", asf_training_data)
+
+    # Create extra training data for AFS
     afs_extra_training_data = (
         pd.DataFrame(
             s3._download_obj(

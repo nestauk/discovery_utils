@@ -31,6 +31,7 @@ datasets = "^2.19.0"
 evaluate = "^0.4.2"
 accelerate = "^0.29.3"
 skypilot = "^0.5.0"
+openai = "^1.35.9"
 
 
 [tool.poetry.group.test]

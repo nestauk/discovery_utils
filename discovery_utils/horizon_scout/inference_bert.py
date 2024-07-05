@@ -138,9 +138,12 @@ def upload_df(df: pd.DataFrame, path: str) -> None:
     s3.upload_obj(df, s3.BUCKET_NAME_RAW, path, kwargs_writing={"index": False})
 
 
-def load_models(model_paths: List[str], missions: List[str]) -> List[PreTrainedModel]:
-    """Load BERT models."""
-    return [get_bert_model(mission, model_path) for mission, model_path in zip(missions, model_paths)]
+def load_models(model_paths: List[str], missions: List[str], gpu: bool = True) -> List[PreTrainedModel]:
+    """Load BERT models.
+
+    Set gpu to False when loading models on CPU.
+    """
+    return [get_bert_model(mission, model_path, gpu) for mission, model_path in zip(missions, model_paths)]
 
 
 if __name__ == "__main__":

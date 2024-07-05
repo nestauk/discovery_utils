@@ -422,9 +422,7 @@ def upload_obj(
         obj = _np_array_to_fileobj(obj, path_to, **kwargs_writing)
     else:
         obj = _unsupp_data_to_fileobj(obj, path_to, **kwargs_writing)
-        warnings.warn(
-            "Data uploaded as pickle. Please consider other accessible " "file types among the supported ones."
-        )
+        warnings.warn("Data uploaded as pickle. Please consider other accessible file types among the supported ones.")
 
-    s3 = boto3.client("s3")
+    s3 = s3_client()
     s3.upload_fileobj(obj, bucket, path_to, **kwargs_boto)

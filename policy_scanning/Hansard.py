@@ -11,6 +11,7 @@ import os
 import re
 import sys
 
+from typing import Dict
 from typing import List
 
 import pandas as pd
@@ -25,7 +26,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
 # global variables
-memberships = None  # This variable stores the meta-data for each MP
+global membership_dict
+global person_id_dict
 
 # --------------------------------------------------------------------------------------------------------------------
 # Define functions:
@@ -100,6 +102,7 @@ def clean_text(text: str) -> str:
         connect_speech (str): the cleaned version of the speech
     """
     cleaned_text = text.strip()  # removes spaces, tabs, newlines
+    cleaned_text = re.sub(r"\s+", " ", cleaned_text)
     cleaned_text = cleaned_text.replace("\t", "")
     lines = cleaned_text.splitlines()  # split the text into seperate lines
     non_empty_lines = [line for line in lines if line.strip()]  # remove all the blank lines in the speech
@@ -107,21 +110,56 @@ def clean_text(text: str) -> str:
     return connect_speech
 
 
-def find_party(membership_id: List[dict]) -> str:
-    """
-    Retrieve the party affiliation of the MP who delivered the speech using the memberships list.
-
-    Args:
-        membership_id List[dict]: List of dictionaries that stores the information members of parliament.
-
-    Returns:
-        party(str): the affiliated party of the MP who gave the speech.
-    """
+def find_party(member_id, person_id, current_date):
     party = None
-    for item in memberships:
-        if item.get("id") == membership_id:
-            party = item.get("on_behalf_of_id")
+    debate_date = pd.to_datetime(current_date, format="%Y-%m-%d").date()
+
+    if member_id != "NA":
+        party = membership_dict.get(member_id)
+        return party
+    elif person_id != "NA":
+        list_possibilities = person_id_dict.get(person_id, [])
+        for possibility in list_possibilities:
+            if possibility["start_date"] <= debate_date <= possibility["end_date"]:
+                party = possibility["on_behalf_of_id"]
+                return party
     return party
+
+
+def clean_meta_data(meta_data: List[Dict]) -> List[Dict]:
+    only_2000 = []
+    start_date = None
+
+    for item in meta_data:
+        # Check if 'start_date' and 'end_date' are present
+        if "start_date" in item:
+            start_date = str(item["start_date"])
+            if len(start_date) > 4:
+                if "end_date" in item:
+                    if item["end_date"][:-8] == "20":
+                        if "on_behalf_of_id" in item:
+                            only_2000.append(item)
+
+    filtered_meta_data = only_2000
+    return filtered_meta_data
+
+
+# Create a function that changes the list into dictionaries for faster acces
+def create_dict(data, old_key):
+    dict = {}
+    for item in data:
+        new_key = item[old_key]
+        if new_key in dict:
+            dict[new_key].append(item)
+        else:
+            dict[new_key] = [item]
+
+    for key, value in dict.items():  # change this because you are not using key
+        for item in value:
+            item["end_date"] = pd.to_datetime(item["end_date"], format="%Y-%m-%d").date()
+            item["start_date"] = pd.to_datetime(item["start_date"], format="%Y-%m-%d").date()
+
+    return dict
 
 
 # Retrieve meta-data from MPs to assign each speaker to their party
@@ -177,7 +215,10 @@ def get_speeches(temp_list: list, current_year: int) -> List[dict]:
             context = root.findall("./")
 
             debate_year = str(current_year)
-            date_current = item[-15:-5]
+            if len(item) == 98:
+                date_current = item[-15:-5]
+            else:
+                date_current = item[-14:-4]
 
             current_major_heading = None
             current_minor_heading = None
@@ -197,7 +238,8 @@ def get_speeches(temp_list: list, current_year: int) -> List[dict]:
                     sp_id = elem.get("id")
                     speakername = elem.get("speakername", "NA")
                     speaker_id = elem.get("speakerid", "NA")
-                    party_speaker = find_party(speaker_id)
+                    person_id = elem.get("person_id", "NA")
+                    party_speaker = find_party(speaker_id, person_id, date_current)
                     person_id = elem.get("person_id", "NA")
                     speech_type = elem.get("type", "NA")
 
@@ -212,8 +254,8 @@ def get_speeches(temp_list: list, current_year: int) -> List[dict]:
                             "speech_id": sp_id,
                             "speakername": speakername,
                             "speaker_id": speaker_id,
-                            "party_speaker": party_speaker,
                             "person_id": person_id,
+                            "party_speaker": party_speaker,
                             "speech_type": speech_type,
                             "year": debate_year,
                             "date": date_current,
@@ -225,10 +267,16 @@ def get_speeches(temp_list: list, current_year: int) -> List[dict]:
 
 # getthedata
 if __name__ == "__main__":
-
     # Retrieve meta-data from MPs to assign each speaker to their party.
     path = PROJECT_DIR / "policy_scanning/data/parlparse/members/people.json"
     meta_data = open_file(path)
+
+    # clean meta_data for easier access
+    filtered_meta_data = clean_meta_data(meta_data)
+
+    # Create dictionaries for easy search access
+    membership_dict = {item["id"]: item["on_behalf_of_id"] for item in filtered_meta_data}
+    person_id_dict = create_dict(filtered_meta_data, "person_id")
 
     # Select the paths to the debate files
     data_path = PROJECT_DIR / "policy_scanning/data/scrapedxml/debates"

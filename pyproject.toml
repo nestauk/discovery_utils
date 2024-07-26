@@ -62,6 +62,7 @@ black = "^22.6.0"                         # Python style checks
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.24.0"
+notebook = "^7.2.1"
 
 
 [build-system]

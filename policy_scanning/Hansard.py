@@ -1,12 +1,6 @@
 #!/usr/bin/env python
 
-# download the data from TheyWorkForYou by using:
-# rsync -az --exclude='*s19*'  --progress --exclude '.svn' --exclude 'tmp/'
-# --relative  data.theyworkforyou.com::parldata/scrapedxml/debates/  .
-
 import json
-
-# load libraries
 import os
 import re
 import sys
@@ -25,9 +19,11 @@ from discovery_utils import PROJECT_DIR
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 
-# global variables
+# global dictionaries, accessed by def find_party()
 global membership_dict
 global person_id_dict
+# global list, stores the people.json file
+global memberships
 
 # --------------------------------------------------------------------------------------------------------------------
 # Define functions:
@@ -38,7 +34,7 @@ def FilePaths(directory: str) -> List[str]:
     Create a list that stores the path files to the debates
 
     Args:
-        directory (str): The filepath that leads you to where you have stored the debate transcripts.
+        directory (str): The filepath of the debate
 
 
     Returns:
@@ -73,10 +69,10 @@ def select_debates_per_year(filelist: List[str], current_year: int) -> List[str]
 
 def extract_text(elem: object) -> str:
     """
-    Retrieve the text of the speeches from the lxml boject.
+    Retrieve the text of the speeches from the lxml object.
 
     Args:
-        elem (object): xml element with elem.tag 'speech'
+        elem (object): xml element with elem.tag = 'speech'
 
     Returns:
       speech_text (str): The text of the speech.
@@ -101,6 +97,7 @@ def clean_text(text: str) -> str:
     Returns:
         connect_speech (str): the cleaned version of the speech
     """
+
     cleaned_text = text.strip()  # removes spaces, tabs, newlines
     cleaned_text = re.sub(r"\s+", " ", cleaned_text)
     cleaned_text = cleaned_text.replace("\t", "")
@@ -110,7 +107,19 @@ def clean_text(text: str) -> str:
     return connect_speech
 
 
-def find_party(member_id, person_id, current_date):
+def find_party(member_id: str, person_id: str, current_date: str) -> str:
+    """
+    Select the party of which the MP who gave the speech is a member of
+
+    Args:
+        member_id (str): if present, it is a string that stores the member_id of the MP, otherwise "NA"
+        person_id (str): if present, it is a string that stores the person_id of the MP, otherwise "NA"
+        current_date (str): the day on which the speech was held.
+
+    Returns:
+        party (str): the party of which the MP who gave the speech is a member of
+    """
+
     party = None
     debate_date = pd.to_datetime(current_date, format="%Y-%m-%d").date()
 
@@ -118,20 +127,37 @@ def find_party(member_id, person_id, current_date):
         party = membership_dict.get(member_id)
         return party
     elif person_id != "NA":
-        list_possibilities = person_id_dict.get(person_id, [])
-        for possibility in list_possibilities:
-            if possibility["start_date"] <= debate_date <= possibility["end_date"]:
-                party = possibility["on_behalf_of_id"]
+        list_all_parliamentary_terms = person_id_dict.get(person_id, [])
+        for parliamentary_term in list_all_parliamentary_terms:
+            if parliamentary_term["start_date"] <= debate_date <= parliamentary_term["end_date"]:
+                party = parliamentary_term["on_behalf_of_id"]
                 return party
     return party
 
 
 def clean_meta_data(meta_data: List[Dict]) -> List[Dict]:
+    """
+    Clean the people.json file.
+
+    The json file is a list of dictionaries. For every dictionary this function does the following:
+    step 1: checks whether the dictionary includes the key "start_date".
+    step 2: If  yes, it checks whether this start_date has the following format: "%Y-%m-%d"
+    step 3: If yes, it checks whether the dictionary also includes the key "end_date"
+    step 4: If yes, it checks whether this end_date is in the 21 century.
+    step 5: If yes, the dictionary is added to the list only_2000
+    --> These steps ensure that the json file can be used to select meta data about MPs without causing errors
+
+    Args:
+        meta_data: (List[Dict]): the people.json file that contains the meta data about the MPs.
+
+    Returns:
+        filtered_meta_data (str): the filterd people.json file
+    """
+
     only_2000 = []
     start_date = None
 
     for item in meta_data:
-        # Check if 'start_date' and 'end_date' are present
         if "start_date" in item:
             start_date = str(item["start_date"])
             if len(start_date) > 4:
@@ -144,25 +170,48 @@ def clean_meta_data(meta_data: List[Dict]) -> List[Dict]:
     return filtered_meta_data
 
 
-# Create a function that changes the list into dictionaries for faster acces
-def create_dict(data, old_key):
-    dict = {}
-    for item in data:
-        new_key = item[old_key]
-        if new_key in dict:
-            dict[new_key].append(item)
-        else:
-            dict[new_key] = [item]
+def create_dict(data: List[dict], id: (str)) -> dict:
+    """
+    Create two dictionaries from the people.json file for faster access to the party of an MP
 
-    for key, value in dict.items():  # change this because you are not using key
+    Dictionary 1 = a dictionary that uses the member_ID as key and attaches the party of an MP as value
+    Dictoinary 2 = a dictionary that uses the person_ID as key and attaches list of dictionaries as value.
+    --> each dictionary of the list has information about one parliamentary term the person with the person_ID served.
+
+    Two dictionaries, because the XML debate files sometimes have a member_ID attached and sometimes a person_ID.
+
+    Args:
+        data: (List[Dict]): the filtered people.json file
+        id (str) = person_id given to an MP by mysociety
+
+    Returns:
+        member_dict = dictionary 1
+        person_dict = dictionary 2
+
+    """
+
+    # create the member_id dictionary
+    member_dict = {item["id"]: item["on_behalf_of_id"] for item in filtered_meta_data}
+
+    # create the person_id dictionary
+    person_dict = {}
+    for item in data:
+        person_id = item[id]
+        # check whether the person_id is already in person_dict
+        if person_id in person_dict:
+            person_dict[person_id].append(item)
+        else:
+            person_dict[person_id] = [item]
+
+    # Change the date to the datetime format, so that it can be used to locate the party of an MP
+    for value in person_dict.values():
         for item in value:
             item["end_date"] = pd.to_datetime(item["end_date"], format="%Y-%m-%d").date()
             item["start_date"] = pd.to_datetime(item["start_date"], format="%Y-%m-%d").date()
 
-    return dict
+    return member_dict, person_dict
 
 
-# Retrieve meta-data from MPs to assign each speaker to their party
 def open_file(file_path: str) -> list[dict]:
     """
     Open the people.json file from Twfy to retrieve meta-data for the members of parliament
@@ -174,7 +223,7 @@ def open_file(file_path: str) -> list[dict]:
         memberships (list): A list of dictionaries. Each dictionary contains the information related to one MP.
     """
 
-    global memberships  # make global so that we only have to open the file once
+    # global memberships  #!!!!!!!
     with open(file_path, "r") as file:
         data = json.load(file)
         memberships = data["memberships"]
@@ -183,17 +232,15 @@ def open_file(file_path: str) -> list[dict]:
 
 def get_speeches(temp_list: list, current_year: int) -> List[dict]:
     """
-    Parse the debatefile and retrieve the following information form the file:
+    Parse the debate file and retrieve the following information form the file:
 
         - Major_heading: Major debate heading
         - Minor_heading:  sub title of a debate
         - Speeches: The text of the speech
         - speakername = The name of the MP who gave the speech
         - speaker_id = The member_id given to the MP by Twfy (mysociety)
-        - party_speaker = The party the MP who gave the speech belongs to
+        - party_speaker = The party the MP belongs to at the time of the speech
         - person_id = The person_id given to the MP by Twfy (mysociety)
-        - speech_type = The type of speech given.
-
 
     Args:
         temp_list (list): list that stores the debates to analyse.
@@ -226,10 +273,10 @@ def get_speeches(temp_list: list, current_year: int) -> List[dict]:
             # Iterate over the elements
             for elem in context:
                 if elem.tag == "major-heading":
-                    store_text = clean_text(elem.text)
+                    major_heading = clean_text(elem.text)
                     # Update major heading and reset minor heading if it's a new major heading
-                    if store_text != current_major_heading:
-                        current_major_heading = store_text
+                    if major_heading != current_major_heading:
+                        current_major_heading = major_heading
                         current_minor_heading = None
                 elif elem.tag == "minor-heading":
                     current_minor_heading = clean_text(elem.text)
@@ -240,10 +287,8 @@ def get_speeches(temp_list: list, current_year: int) -> List[dict]:
                     speaker_id = elem.get("speakerid", "NA")
                     person_id = elem.get("person_id", "NA")
                     party_speaker = find_party(speaker_id, person_id, date_current)
-                    person_id = elem.get("person_id", "NA")
-                    speech_type = elem.get("type", "NA")
 
-                    # get actual speech
+                    # get the actual speech
                     speechtext = extract_text(elem)
                     clean_speech = clean_text(speechtext)
                     data.append(
@@ -256,7 +301,6 @@ def get_speeches(temp_list: list, current_year: int) -> List[dict]:
                             "speaker_id": speaker_id,
                             "person_id": person_id,
                             "party_speaker": party_speaker,
-                            "speech_type": speech_type,
                             "year": debate_year,
                             "date": date_current,
                         }
@@ -273,16 +317,14 @@ if __name__ == "__main__":
 
     # clean meta_data for easier access
     filtered_meta_data = clean_meta_data(meta_data)
-
-    # Create dictionaries for easy search access
-    membership_dict = {item["id"]: item["on_behalf_of_id"] for item in filtered_meta_data}
-    person_id_dict = create_dict(filtered_meta_data, "person_id")
+    # Create dictionaries for easier search access
+    membership_dict, person_id_dict = create_dict(filtered_meta_data, "person_id")
 
     # Select the paths to the debate files
     data_path = PROJECT_DIR / "policy_scanning/data/scrapedxml/debates"
     list_of_datafiles = sorted(FilePaths(data_path))
 
-    list_of_df_debates = []  # Every dataframe in this list represents the debates held in one year.
+    list_of_df_debates = []  # Every dataframe in this list contains the debates held in one year.
 
     for year in range(2005, 2025):
         print("processing:", year)  # noqa:<T001>

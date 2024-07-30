@@ -16,15 +16,23 @@ STEP 2: run the following command in the terminal to download the data:
     You can change this command of you only which to download debates from, for example, one year or one day.
     For example: rsync -az --progress --exclude '.svn' --exclude 'tmp/' --relative data.theyworkforyou.com::parldata/scrapedxml/debates/'debates2024-*' .
 
-    Note:
+    Notes:
         rsync compares the files from the source directory with the files that are on the destination directory (your directory).
         That means rsync is desigend to synchronize files between a source and a destination by transferring only the differences between the source and destination directories. That means you can rerun the above code to download new files without redownloading all the data.
         It also means that if you want to redownload a debate because it has been updated, you need to first remove that specific file within your folder.
-    Extra Notes:
+
+        Do not forget the parantheses if you only wish the download debates from one specific year or day.
+
         Running the Rsync code above will create the path scrapedxml/debates.
         Hence the file_path where the transcripts are stored as follows: ./scrapedxml/debates"
+        To see more data that can be downloaded from TheyWorkForYou.com you can checkout: https://www.theyworkforyou.com/pwdata/
 
-STEP 3: Then run:
+STEP 3: download the people.json file by cloning the parlparse github into your own data folder. This file is used to retrieve
+        the affiliated party from MPs.
+
+    git clone https://github.com/mysociety/parlparse
+
+STEP 4: Then run:
     python path/to/the/file/Hansard.py
 
     This will create a file in data/HansardDebates.parquet with the following columns:
@@ -33,6 +41,5 @@ STEP 3: Then run:
         - Speeches: The text of the speech
         - speakername = The name of the MP who gave the speech
         - speaker_id = The member_id given to the MP by Twfy (mysociety)
-        - party_speaker = The party the MP who gave the speech belongs to
         - person_id = The person_id given to the MP by Twfy (mysociety)
-        - speech_type = The type of speech given.
+        - party_speaker = The party the MP who gave the speech belongs to

@@ -26,17 +26,17 @@ python-dotenv = "^1.0.1"
 nltk = "^3.8.1"
 matplotlib = "^3.8.4"
 sentence-transformers = "^2.7.0"
+lxml = "^5.2"
 seaborn = "^0.13.2"
 datasets = "^2.19.0"
 evaluate = "^0.4.2"
 accelerate = "^0.29.3"
 skypilot = "^0.5.0"
 openai = "^1.35.9"
-
+langfuse = "^2.38.1"
 
 [tool.poetry.group.test]
 optional = true
-
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.1.1" # Allows for testing of the project
@@ -62,6 +62,7 @@ black = "^22.6.0"                         # Python style checks
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.24.0"
+notebook = "^7.2.1"
 
 
 [build-system]

@@ -7,12 +7,14 @@ envs:
   BUCKET_NAME_RAW: discovery-iss
 workdir: .
 setup: |
-  cp ~/.aws/credentials ~/sky_workdir/.credentials/aws_credentials
   cd ~/sky_workdir
   curl -sSL https://install.python-poetry.org | python3 -
   export PATH="/home/ubuntu/.local/bin:$PATH"
+  git clone -b 32_scraping_govuk_Twfy https://github.com/nestauk/discovery_utils.git
+  cd discovery_utils
   poetry install
+  poetry add notebook
 run: |
-  cd ~/sky_workdir
+  cd ~/sky_workdir/discovery_utils
   export PATH="/home/ubuntu/.local/bin:$PATH"
-  poetry run python discovery_utils/horizon_scout/inference_bert.py
+  poetry jupyter notebook --port 8888

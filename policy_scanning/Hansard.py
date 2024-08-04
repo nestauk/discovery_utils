@@ -262,7 +262,7 @@ def get_speeches(temp_list: list, current_year: int) -> List[dict]:
             context = root.findall("./")
 
             debate_year = str(current_year)
-            if len(item) == 98:
+            if len(item.split("/")[-1]) == 22:
                 date_current = item[-15:-5]
             else:
                 date_current = item[-14:-4]

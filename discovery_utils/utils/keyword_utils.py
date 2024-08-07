@@ -103,36 +103,12 @@ def find_keyword_hits(keywords: List[List[str]], sentences: List[str]) -> List[b
     return hits
 
 
-def get_organisation_descriptions(
-    organisations: pd.DataFrame,
-    organisation_descriptions: pd.DataFrame,
-) -> pd.DataFrame:
-    """
-    Create a full text description from the short description and the description columns
-
-    Args:
-        organisations (pd.DataFrame): DataFrame containing organisation data.
-        organisation_descriptions (pd.DataFrame): DataFrame containing detailed organisation.
-
-    Returns:
-        pd.DataFrame: A DataFrame with full descriptions associated with each organisation.
-    """
-    return (
-        organisations[["id", "short_description"]]
-        .merge(organisation_descriptions[["id", "description"]], on="id", how="left")
-        .dropna(subset=["short_description", "description"], how="all")
-        .fillna("")
-        .assign(text=lambda df: df["short_description"] + ". " + df["description"])
-        .drop(columns=["short_description", "description"])
-    )
-
-
 def enrich_keyword_labels(
     text_df: pd.DataFrame,
     keyword_type: str,
 ) -> pd.DataFrame:
     """
-    Enrich organisation data by adding topic and mission labels based on keyword hits
+    Enrich text dataframe by adding topic and mission labels based on keyword hits
 
     Args:
         text_df (pd.DataFrame): DataFrame containing 'id' and 'text' columns.
@@ -194,13 +170,13 @@ def transform_labels_df(
     labels_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Group the labels DataFrame by organisation ID and aggregate the labels into sets.
+    Group the labels DataFrame by ID and aggregate the labels into sets.
 
     Args:
-        labels_df (pd.DataFrame): DataFrame containing organisations and associated mission and topic labels
+        labels_df (pd.DataFrame): DataFrame containing ids and associated mission and topic labels
 
     Returns:
-        pd.DataFrame: DataFrame grouped by organisation ID and aggregated label columns
+        pd.DataFrame: DataFrame grouped by id and aggregated label columns
     """
     return (
         labels_df.groupby("id")
@@ -218,11 +194,10 @@ def transform_labels_df(
 
 
 def enrich_topic_labels(
-    organisations: pd.DataFrame,
-    organisation_descriptions: pd.DataFrame,
+    text_df: pd.DataFrame,
 ) -> pd.DataFrame:
     """
-    Enrich organisation data by adding topic and mission labels for all missions.
+    Enrich text dataframe by adding topic and mission labels for all missions.
 
     Args:
         organisations (pd.DataFrame): DataFrame containing organisation data.
@@ -232,7 +207,6 @@ def enrich_topic_labels(
         pd.DataFrame: DataFrame with enriched topic and mission labels.
     """
 
-    text_df = get_organisation_descriptions(organisations, organisation_descriptions)
     labels_df = []
     for mission in ["ASF", "AHL", "AFS", "X"]:
         labels_df.append(enrich_keyword_labels(text_df, mission))

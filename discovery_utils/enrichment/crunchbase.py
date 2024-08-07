@@ -430,6 +430,21 @@ def _enrich_org_is_smart_money(
     )
 
 
+def get_organisation_descriptions(
+    organisations: pd.DataFrame,
+    organisation_descriptions: pd.DataFrame,
+) -> pd.DataFrame:
+    """Create a full text description from the short description and the description columns"""
+    return (
+        organisations[["id", "short_description"]]
+        .merge(organisation_descriptions[["id", "description"]], on="id", how="left")
+        .dropna(subset=["short_description", "description"], how="all")
+        .fillna("")
+        .assign(text=lambda df: df["short_description"] + ". " + df["description"])
+        .drop(columns=["short_description", "description"])
+    )
+
+
 def enrich_organisations(
     organisations: pd.DataFrame,
     funding_rounds_enriched: pd.DataFrame,
@@ -451,7 +466,8 @@ def enrich_organisations(
     )
 
     if enrich_labels:
-        topic_labels = enrich_topic_labels(organisations_enriched, organisation_descriptions)
+        text_df = get_organisation_descriptions(organisations, organisation_descriptions)
+        topic_labels = enrich_topic_labels(text_df)
         return organisations_enriched.merge(topic_labels, how="left", on="id").pipe(
             _enrich_org_is_smart_money,
             funding_rounds_enriched=funding_rounds_enriched,

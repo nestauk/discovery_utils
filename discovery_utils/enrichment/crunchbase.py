@@ -20,6 +20,7 @@ import pandas as pd
 from currency_converter import CurrencyConverter
 
 from discovery_utils.utils import google
+from discovery_utils.utils.keyword_utils import enrich_topic_labels
 
 
 from typing import Dict, Iterator, List, Tuple  # isort: skip
@@ -190,39 +191,6 @@ def get_funding_round_investors(
         investors[investor_cols].rename(columns={"id": "investor_id", "cb_url": "investor_url"}),
         on="investor_id",
         how="left",
-    )
-
-
-def _process_keywords(keywords: List[str], separator: str = ",") -> List[List[str]]:
-    """Process a list of keywords and keyword combinations
-
-    Args:
-        keywords (List[str]): list of keywords in the format ['keyword_1', 'keyword_2, keyword_3']
-
-    Returns:
-        List[List[str]]: list of lists of keywords in the format ['keyword_1', ['keyword_2', 'keyword_3']]
-    """
-    return [[word.strip().replace("~", " ") for word in line.split(separator)] for line in keywords]
-
-
-def get_keywords(
-    keyword_type: str,
-) -> Dict:
-    """
-    Fetch keywords from a Google Sheet
-
-    Keywords types correspond to missions and are ASF, AFS, AHL, and X.
-    """
-    # Process keywords
-    keywords_df = google.access_google_sheet(
-        os.environ["SHEET_ID_KEYWORDS"],
-        keyword_type,
-    )
-    return (
-        keywords_df.assign(keywords_list=lambda df: _process_keywords(df["Keywords"].to_list()))
-        .groupby("Subcategory")
-        .agg(keywords=("keywords_list", list))
-        .to_dict()["keywords"]
     )
 
 
@@ -462,128 +430,6 @@ def _enrich_org_is_smart_money(
     )
 
 
-def _split_sentences(texts: list, ids: list) -> Tuple[List]:
-    """
-    Split a list of texts into sentences and keep track of which text each sentence belongs to
-
-    Args:
-        texts: A list of strings
-        ids: A list of identifiers for each text
-
-    Returns:
-        A tuple with two lists: the first list contains the sentences, and the second list contains the identifiers
-    """
-    # precompile the regex for efficiency
-    sentence_endings = re.compile(r"(?<=[.!?]) +")
-    sentences = []
-    sentence_ids = []
-    for i, text in enumerate(texts):
-        for sentence in sentence_endings.split(text):
-            sentences.append(sentence)
-            sentence_ids.append(ids[i])
-    return sentences, sentence_ids
-
-
-def _find_keyword_hits(keywords: List[List[str]], sentences: List[str]) -> List[bool]:
-    """Check if a text contains any of the keywords or keyword combinatons"""
-    hits = []
-    for text in sentences:
-        keyword_hits = True
-        for keyword in keywords:
-            # Note that we are looking for exact matches
-            keyword_hits = keyword_hits and (keyword in text)
-        hits.append(False or keyword_hits)
-    return hits
-
-
-def get_organisation_descriptions(
-    organisations: pd.DataFrame,
-    organisation_descriptions: pd.DataFrame,
-) -> pd.DataFrame:
-    """Create a full text description from the short description and the description columns"""
-    return (
-        organisations[["id", "short_description"]]
-        .merge(organisation_descriptions[["id", "description"]], on="id", how="left")
-        .dropna(subset=["short_description", "description"], how="all")
-        .fillna("")
-        .assign(text=lambda df: df["short_description"] + ". " + df["description"])
-        .drop(columns=["short_description", "description"])
-    )
-
-
-def _enrich_keyword_labels(
-    text_df: pd.DataFrame,
-    keyword_type: str,
-) -> pd.DataFrame:
-    """Enrich organisation data by adding topic and mission labels based on keyword hits"""
-    # Fetch keywords
-    subcategory_to_keywords = get_keywords(keyword_type)
-    # Split text into sentences
-    sentences, sentence_ids = _split_sentences(text_df.text.to_list(), text_df.id.to_list())
-    sentence_ids = np.array(sentence_ids)
-    # General terms
-    general_term_ids = None
-
-    # to do: first check which texts that contain any general terms
-
-    # Then check for the specific, non-general terms
-    hits_df = []
-    for topic in subcategory_to_keywords:
-        hits = []
-        for keywords in subcategory_to_keywords[topic]:
-            hits.append(_find_keyword_hits(keywords, sentences))
-
-        # Find if any of the subcategory keywords are present in the text
-        hits_matrix = np.array(hits).any(axis=0)
-        # Get array indices for texts with keywords
-        hits_indices = np.where(hits_matrix == True)[0]  # noqa: E712
-        if hits_indices.size == 0:
-            continue
-        # Get corresponding unique ids
-        hit_ids = set(sentence_ids[hits_indices])
-        # Check if these are general terms and keywords
-        if "general terms" in topic:
-            general_term_ids = hit_ids.copy()
-        else:
-            # Save to a dataframe
-            hits_df.append(
-                pd.DataFrame(
-                    data={
-                        "id": list(hit_ids),
-                        "topic_label": topic,
-                    }
-                )
-            )
-    if len(hits_df) == 0:
-        return pd.DataFrame(columns=["id", "topic_label", "mission_label"])
-    else:
-        hits_df = pd.concat(hits_df, ignore_index=True).assign(mission_label=keyword_type)
-        # Filter noise using general mission topic area terms
-        if general_term_ids is None:
-            return hits_df
-        else:
-            return hits_df.query("id in @general_term_ids").reset_index(drop=True)
-
-
-def _transform_labels_df(
-    labels_df: pd.DataFrame,
-) -> pd.DataFrame:
-    """Group the labels dataframe by organisation ID and aggregate the labels into sets"""
-    return (
-        labels_df.groupby("id")
-        .agg(
-            mission_labels=("mission_label", lambda x: set(list(x))),
-            topic_labels=("topic_label", lambda x: set(list(x))),
-        )
-        # Coverting sets to strings
-        .assign(
-            mission_labels=lambda df: df.mission_labels.apply(lambda x: ",".join(x) if type(x) is set else x),
-            topic_labels=lambda df: df.topic_labels.apply(lambda x: ",".join(x) if type(x) is set else x),
-        )
-        .reset_index()
-    )
-
-
 def enrich_organisations(
     organisations: pd.DataFrame,
     funding_rounds_enriched: pd.DataFrame,
@@ -605,7 +451,7 @@ def enrich_organisations(
     )
 
     if enrich_labels:
-        topic_labels = _enrich_topic_labels(organisations_enriched, organisation_descriptions)
+        topic_labels = enrich_topic_labels(organisations_enriched, organisation_descriptions)
         return organisations_enriched.merge(topic_labels, how="left", on="id").pipe(
             _enrich_org_is_smart_money,
             funding_rounds_enriched=funding_rounds_enriched,
@@ -615,18 +461,6 @@ def enrich_organisations(
         return organisations_enriched.pipe(
             _enrich_org_is_smart_money, funding_rounds_enriched=funding_rounds_enriched, filter_mission_relevant=False
         )
-
-
-def _enrich_topic_labels(
-    organisations: pd.DataFrame,
-    organisation_descriptions: pd.DataFrame,
-) -> pd.DataFrame:
-    """Enrich organisation data by adding topic and mission labels for all missions"""
-    text_df = get_organisation_descriptions(organisations, organisation_descriptions)
-    labels_df = []
-    for mission in ["ASF", "AHL", "AFS", "X"]:
-        labels_df.append(_enrich_keyword_labels(text_df, mission))
-    return pd.concat(labels_df, ignore_index=True).pipe(_transform_labels_df)
 
 
 if __name__ == "__main__":

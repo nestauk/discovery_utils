@@ -20,7 +20,7 @@ import pandas as pd
 from currency_converter import CurrencyConverter
 
 from discovery_utils.utils import google
-from discovery_utils.utils.keyword_utils import enrich_topic_labels
+from utils.keywords import enrich_topic_labels
 
 
 from typing import Dict, Iterator, List, Tuple  # isort: skip

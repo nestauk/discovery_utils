@@ -1,8 +1,8 @@
 """
 keyword_utils.py
 
-This module contains utility functions for processing and analyzing keywords
-in text data. It provides functionality for keyword extraction, sentence splitting,
+This module contains functions for processing and analyzing keywords in text data.
+It provides functionality for keyword extraction, sentence splitting,
 and label enrichment based on keyword matches.
 """
 
@@ -15,7 +15,7 @@ import pandas as pd
 from discovery_utils.utils import google
 
 
-from typing import Dict, List, Tuple, Union  # isort: skip
+from typing import Dict, List, Tuple  # isort: skip
 
 
 def process_keywords(keywords: List[str], separator: str = ",") -> List[List[str]]:
@@ -200,8 +200,7 @@ def enrich_topic_labels(
     Enrich text dataframe by adding topic and mission labels for all missions.
 
     Args:
-        organisations (pd.DataFrame): DataFrame containing organisation data.
-        organisation_descriptions (pd.DataFrame): DataFrame containing organisation descriptions.
+        text_df (pd.DataFrame): DataFrame containing text to be labelled and ids.
 
     Returns:
         pd.DataFrame: DataFrame with enriched topic and mission labels.

@@ -11,7 +11,6 @@ python discovery_utils/enrichment/crunchbase.py --test
 
 import argparse
 import os
-import re
 
 import dotenv
 import numpy as np
@@ -20,10 +19,10 @@ import pandas as pd
 from currency_converter import CurrencyConverter
 
 from discovery_utils.utils import google
-from utils.keywords import enrich_topic_labels
+from discovery_utils.utils.keywords import enrich_topic_labels
 
 
-from typing import Dict, Iterator, List, Tuple  # isort: skip
+from typing import Iterator  # isort: skip
 
 dotenv.load_dotenv()
 
@@ -467,7 +466,7 @@ def enrich_organisations(
 
     if enrich_labels:
         text_df = get_organisation_descriptions(organisations, organisation_descriptions)
-        topic_labels = enrich_topic_labels(text_df)
+        topic_labels = enrich_topic_labels(text_df.query("id in @organisation_ids"))
         return organisations_enriched.merge(topic_labels, how="left", on="id").pipe(
             _enrich_org_is_smart_money,
             funding_rounds_enriched=funding_rounds_enriched,

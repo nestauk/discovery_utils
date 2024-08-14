@@ -1,5 +1,5 @@
 """
-keyword_utils.py
+discovery_utils.utils.keywords
 
 This module contains functions for processing and analyzing keywords in text data.
 It provides functionality for keyword extraction, sentence splitting,

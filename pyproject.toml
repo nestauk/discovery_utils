@@ -26,7 +26,6 @@ python-dotenv = "^1.0.1"
 nltk = "^3.8.1"
 matplotlib = "^3.8.4"
 sentence-transformers = "^2.7.0"
-lxml = "^5.2"
 seaborn = "^0.13.2"
 datasets = "^2.19.0"
 evaluate = "^0.4.2"
@@ -34,6 +33,8 @@ accelerate = "^0.29.3"
 skypilot = "^0.5.0"
 openai = "^1.35.9"
 langfuse = "^2.38.1"
+lxml = "^5.3.0"
+polars = "^1.5.0"
 
 [tool.poetry.group.test]
 optional = true

@@ -103,10 +103,7 @@ def find_keyword_hits(keywords: List[List[str]], sentences: List[str]) -> List[b
     return hits
 
 
-def enrich_keyword_labels(
-    text_df: pd.DataFrame,
-    keyword_type: str,
-) -> pd.DataFrame:
+def enrich_keyword_labels(text_df: pd.DataFrame, keyword_type: str, split_sentences=True) -> pd.DataFrame:
     """
     Enrich text dataframe by adding topic and mission labels based on keyword hits
 
@@ -119,9 +116,13 @@ def enrich_keyword_labels(
     """
     # Fetch keywords
     subcategory_to_keywords = get_keywords(keyword_type)
-    # Split text into sentences
-    sentences, sentence_ids = split_sentences(text_df.text.to_list(), text_df.id.to_list())
-    sentence_ids = np.array(sentence_ids)
+    if split_sentences:
+        # Split text into sentences
+        sentences, sentence_ids = split_sentences(text_df.text.to_list(), text_df.id.to_list())
+        sentence_ids = np.array(sentence_ids)
+    else:
+        sentences = text_df.text.to_list()
+        sentence_ids = np.array(text_df.id.to_list())
     # General terms
     general_term_ids = None
 
@@ -193,9 +194,7 @@ def transform_labels_df(
     )
 
 
-def enrich_topic_labels(
-    text_df: pd.DataFrame,
-) -> pd.DataFrame:
+def enrich_topic_labels(text_df: pd.DataFrame, split_sentences=True) -> pd.DataFrame:
     """
     Enrich text dataframe by adding topic and mission labels for all missions.
 
@@ -208,5 +207,5 @@ def enrich_topic_labels(
 
     labels_df = []
     for mission in ["ASF", "AHL", "AFS", "X"]:
-        labels_df.append(enrich_keyword_labels(text_df, mission))
+        labels_df.append(enrich_keyword_labels(text_df, mission, split_sentences=False))
     return pd.concat(labels_df, ignore_index=True).pipe(transform_labels_df)

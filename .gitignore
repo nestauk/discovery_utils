@@ -168,3 +168,4 @@ notebooks/
 *.parquet
 .credentials/*
 *.csv
+google_credentials.json

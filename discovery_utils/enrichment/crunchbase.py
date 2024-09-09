@@ -235,7 +235,7 @@ def enrich_funding_rounds(
             }
         )
         # Remove really old funding rounds
-        .query(f"announced_on > '{cutoff_year}'")
+        .query(f"announced_on.dt.year > {cutoff_year}")
         .sort_values("announced_on")
         .assign(
             # Convert investment amounts to thousands

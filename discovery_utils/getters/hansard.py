@@ -4,11 +4,13 @@ import os
 import xml.etree.ElementTree as ET
 
 from io import BytesIO
+from pathlib import Path
 
 import boto3
 import pandas as pd
 
 from botocore.client import BaseClient
+from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
 from discovery_utils import PROJECT_DIR
@@ -68,7 +70,7 @@ class HansardGetter:
         try:
             s3_key = os.path.join(self.s3_prefix, key)
             response = s3._download_obj(self.s3_client, self.bucket, s3_key, download_as="dataframe")
-            logger.info(f"Successfully downloaded and read CSV file: {key}")
+            logger.info(f"Successfully downloaded and read labelstore: {key}")
             return response
         except Exception as e:
             logger.error(f"Error downloading CSV file {key}: {str(e)}")
@@ -78,7 +80,7 @@ class HansardGetter:
         logger.info("Downloading new XML files since last sync")
         temp_dir = PROJECT_DIR / "tmp/debates"
         os.makedirs(temp_dir, exist_ok=True)
-        s3_key = os.path.join(self.s3_prefix, "house_of_commons", "files_to_sync.txt")
+        s3_key = os.path.join(self.s3_prefix, "house_of_commons", "files_to_sync.log")
         try:
             files_to_sync = (
                 self.s3_client.get_object(Bucket=self.bucket, Key=s3_key)["Body"].read().decode("utf-8").splitlines()
@@ -97,19 +99,47 @@ class HansardGetter:
             logger.error(f"Error downloading XML files: {str(e)}")
             raise
 
+    def get_all_debates(self):
+        logger.info("Retrieving all XML debate files from S3")
+        temp_dir = Path("tmp/debates")
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        s3_prefix = os.path.join(self.s3_prefix, "house_of_commons")
+
+        try:
+            # List all objects in the S3 directory
+            paginator = self.s3_client.get_paginator("list_objects_v2")
+            pages = paginator.paginate(Bucket=self.bucket, Prefix=s3_prefix)
+
+            downloaded_files = []
+            for page in pages:
+                for obj in page.get("Contents", []):
+                    if obj["Key"].endswith(".xml"):
+                        file_name = os.path.basename(obj["Key"])
+                        local_file_path = temp_dir / file_name
+                        logger.debug(f"Downloading XML file: {obj['Key']} to {local_file_path}")
+
+                        self.s3_client.download_file(self.bucket, obj["Key"], str(local_file_path))
+                        downloaded_files.append(str(local_file_path))
+
+            logger.info(f"Successfully downloaded {len(downloaded_files)} XML files")
+            return downloaded_files
+
+        except ClientError as e:
+            logger.error(f"ClientError downloading XML files: {str(e)}")
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error downloading XML files: {str(e)}")
+            raise
+
     def get_people_metadata(self):
         s3_key = os.path.join(self.s3_prefix, "house_of_commons", "people.json")
         temp_dir = PROJECT_DIR / "tmp/"
         try:
             response = s3._download_obj(self.s3_client, self.bucket, s3_key, download_as="dict")
-            logger.info(f"Successfully downloaded and read json file: {s3_key}")
-            return response
+            logger.info(f"Successfully downloaded json file: {s3_key}")
+            with open(os.path.join(temp_dir, "people.json"), "w") as fp:
+                json.dump(response, fp)
         except Exception as e:
             logger.error(f"Error downloading CSV file {s3_key}: {str(e)}")
             raise
-
-
-if __name__ == "__main__":
-    getter = HansardGetter()
-    debates = getter.get_new_files()
-    debates

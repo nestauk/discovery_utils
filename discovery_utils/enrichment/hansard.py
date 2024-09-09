@@ -1,20 +1,3 @@
-import logging
-
-from io import BytesIO
-from io import StringIO
-
-import pandas as pd
-
-import horizon_scout.inference_bert as hs
-
-from discovery_utils import PROJECT_DIR
-from discovery_utils.utils.keywords import enrich_topic_labels
-
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-logger = logging.getLogger(__name__)
-
 import json
 import logging
 import os
@@ -22,6 +5,8 @@ import re
 
 from datetime import date
 from datetime import datetime
+from io import BytesIO
+from io import StringIO
 from typing import Any
 from typing import Dict
 from typing import Iterator
@@ -32,8 +17,13 @@ import pandas as pd
 
 from lxml import etree
 
+import horizon_scout.inference_bert as hs
+
 from discovery_utils import PROJECT_DIR
+from discovery_utils.getters.hansard import HansardGetter
 from discovery_utils.utils import google
+from discovery_utils.utils import s3 as s3
+from discovery_utils.utils.keywords import enrich_topic_labels
 
 
 # Configure logging
@@ -148,13 +138,6 @@ class HansardProcessor:
         return file_list
 
     @staticmethod
-    def select_debates_per_year(file_list: List[str], year: int) -> List[str]:
-        """Select debate files for a specific year."""
-        year_debates = [file for file in file_list if str(year) in file]
-        logger.info(f"Selected {len(year_debates)} debate files for year {year}")
-        return year_debates
-
-    @staticmethod
     def extract_text(elem: etree.Element) -> str:
         """Extract text from an XML element."""
         for br in elem.xpath(".//br"):
@@ -237,79 +220,129 @@ class HansardProcessor:
 
         # logger.info(f"Processed {speech_count} speeches from file {file_path}")
 
-    def process_debates(self, year: int) -> pd.DataFrame:
-        """Process all debate files for a given year."""
-        logger.info(f"Processing debates for year {year}")
+    def process_debates(self) -> pd.DataFrame:
+        """Process all debate files."""
+        logger.info(f"Processing debates")
         data_path = PROJECT_DIR / "tmp/debates"
         debate_files = self.get_debate_files(data_path)
-        year_debates = self.select_debates_per_year(debate_files, year)
 
         all_speeches = []
-        for file in year_debates:
+        for file in debate_files:
             all_speeches.extend(list(self.process_debate_file(file)))
 
         df = pd.DataFrame(all_speeches)
-        logger.info(f"Processed {len(df)} speeches for year {year}")
+        logger.info(f"Processed {len(df)} speeches")
         return df
 
 
 class HansardEnricher:
-    def __init__(self, s3_client, bucket_name):
-        self.s3 = s3_client
-        self.bucket = bucket_name
-        logger.info(f"Initialized HansardEnricher with bucket: {bucket_name}")
-        hs.s3.BUCKET_NAME_RAW = "discovery-iss"
+    def __init__(self, test_flag=False):
+        self.s3 = self.s3_client = s3.s3_client()
+        self.s3_prefix = "data/policy_scanning_data/"
+        self.bucket = "discovery-iss"
+        hs.s3.BUCKET_NAME_RAW = self.bucket
+        self.test_flag = test_flag
 
     def process_new_xml(self, xml_files):
         logger.info(f"Processing {len(xml_files)} new XML files")
         return pd.DataFrame(columns=["id", "text"])
 
-    def append_and_upload_parquet(self, existing_df, new_df, key):
+    def upload_parquet(self, df):
+        key = "enriched/HansardDebates.parquet"
+        s3_key = os.path.join(self.s3_prefix, key)
         logger.info(f"Appending and uploading parquet file: {key}")
         try:
-            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
-            buffer = BytesIO()
-            combined_df.to_parquet(buffer)
-            self.s3.put_object(Bucket=self.bucket, Key=key, Body=buffer.getvalue())
+            df_parquet = df.astype(str).to_parquet()
+            buffer = BytesIO(df_parquet)
+            self.s3.put_object(Bucket=self.bucket, Key=s3_key, Body=buffer.getvalue())
             logger.info(f"Successfully appended and uploaded parquet file: {key}")
         except Exception as e:
             logger.error(f"Error appending and uploading parquet file {key}: {str(e)}")
             raise
 
-    def append_and_upload_csv(self, existing_df, new_df, key):
+    def upload_csv(self, df, key):
+        s3_key = os.path.join(self.s3_prefix, key)
         logger.info(f"Appending and uploading CSV file: {key}")
         try:
-            combined_df = pd.concat([existing_df, new_df], ignore_index=True)
             csv_buffer = StringIO()
-            combined_df.to_csv(csv_buffer, index=False)
-            self.s3.put_object(Bucket=self.bucket, Key=key, Body=csv_buffer.getvalue())
+            df.to_csv(csv_buffer, index=False)
+            self.s3.put_object(Bucket=self.bucket, Key=s3_key, Body=csv_buffer.getvalue())
             logger.info(f"Successfully appended and uploaded CSV file: {key}")
         except Exception as e:
             logger.error(f"Error appending and uploading CSV file {key}: {str(e)}")
             raise
 
-    def enrich_data(self, hansard_debates, keyword_labels, ml_labels, new_xml_files):
+    def enrich_data(self, hansard_debates, keyword_labelstore, ml_labelstore, latest_debates, incremental):
         logger.info("Starting data enrichment process")
         try:
-            new_debates_df = self.process_new_xml(new_xml_files)
-
-            logger.info("Appending and uploading Hansard debates")
-            self.append_and_upload_parquet(hansard_debates, new_debates_df, "HansardDebates.parquet")
+            if incremental:
+                text_df = latest_debates[["speech_id", "speech"]].rename({"speech_id": "id", "speech": "text"}, axis=1)
+            else:
+                text_df = hansard_debates[["speech_id", "speech"]].rename(
+                    {"speech_id": "id", "speech": "text"}, axis=1
+                )
 
             logger.info("Running keyword labeling")
-            new_keyword_labels = enrich_topic_labels(new_debates_df)
-            self.append_and_upload_csv(keyword_labels, new_keyword_labels, "keyword_label_store.csv")
+            keyword_labels = enrich_topic_labels(text_df)
 
             logger.info("Running ML labeling")
             # Load models and tokenizer
-            bert_models = hs.load_models(hs.MODEL_PATHS, hs.MISSIONS, gpu=False)
+            bert_models = hs.load_models(hs.MODEL_PATHS, hs.MISSIONS, gpu=(not self.test_flag))
             tokenizer = hs.AutoTokenizer.from_pretrained("distilbert/distilbert-base-uncased")
-            new_ml_labels = hs.bert_add_predictions(
-                hansard_debates.to_pandas(), "text", bert_models, tokenizer, hs.MISSIONS, 10
-            )
-            self.append_and_upload_csv(ml_labels, new_ml_labels, "ml_label_store.csv")
+            ml_labels = hs.bert_add_predictions(text_df, "text", bert_models, tokenizer, hs.MISSIONS, 10)
+
+            if incremental:
+                ml_labelstore = pd.concat([ml_labelstore, ml_labels], ignore_index=True)
+                keyword_labelstore = pd.concat([keyword_labelstore, keyword_labels], ignore_index=True)
+            else:
+                ml_labelstore = ml_labels
+                keyword_labelstore = keyword_labels
+
+            self.upload_csv(ml_labelstore, "enriched/HansardDebates_LabelStore_ml.csv")
+            self.upload_csv(keyword_labelstore, "enriched/HansardDebates_LabelStore_keywords.csv")
 
             logger.info("Data enrichment process completed successfully")
         except Exception as e:
             logger.error(f"Error in data enrichment process: {str(e)}")
             raise
+
+
+def run_hansard_enrichment(incremental=True):
+
+    logger.info(f"Starting Hansard enrichment")
+
+    logger.info("Fetching data...")
+    hansard_getter = HansardGetter()
+    debates = hansard_getter.get_parquet()
+    hansard_getter.get_people_metadata()
+
+    if incremental:
+        keyword_labels = hansard_getter.get_labelstore(keywords=True)
+        ml_labels = hansard_getter.get_labelstore(keywords=False)
+        hansard_getter.get_latest_debates()
+    else:
+        keyword_labels = None
+        ml_labels = None
+        latest_debates = None
+        hansard_getter.get_all_debates()
+
+    logger.info("Processing data...")
+    hansard_processor = HansardProcessor()
+    latest_debates = hansard_processor.process_debates()
+
+    logger.info("Enriching data...")
+    enricher = HansardEnricher(
+        # test_flag=True
+    )
+
+    logger.info("Appending and uploading Hansard debates")
+    combined_df = pd.concat([debates, latest_debates], ignore_index=True)
+    enricher.upload_parquet(combined_df)
+
+    enricher.enrich_data(debates, keyword_labels, ml_labels, latest_debates, incremental)
+
+    logger.info("Hansard enrichment completed successfully.")
+
+
+if __name__ == "__main__":
+    run_hansard_enrichment()

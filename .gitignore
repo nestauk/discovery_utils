@@ -169,3 +169,4 @@ notebooks/
 .credentials/*
 *.csv
 google_credentials.json
+tmp/

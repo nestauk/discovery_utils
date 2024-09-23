@@ -34,6 +34,7 @@ accelerate = "^0.29.3"
 skypilot = "^0.5.0"
 openai = ">=1.35.9"
 langfuse = ">=2.38.1"
+ragas= ">=0.1.20"
 llama-index = ">=0.10.65"
 
 [tool.poetry.group.test]

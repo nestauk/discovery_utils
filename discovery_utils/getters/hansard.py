@@ -1,145 +1,204 @@
+"""
+This module provides functionality to retrieve Hansard debate data from S3.
+It includes methods for downloading parquet files, label stores, and XML debate files.
+"""
+
 import json
 import logging
 import os
-import xml.etree.ElementTree as ET
 
-from io import BytesIO
 from pathlib import Path
+from typing import List
 
-import boto3
 import pandas as pd
 
-from botocore.client import BaseClient
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
-from discovery_utils import PROJECT_DIR
-from discovery_utils.utils import s3 as s3
+from discovery_utils.utils import s3
 
 
 load_dotenv()
-
-# Retrieve AWS file information from environment variables
 S3_BUCKET = os.getenv("S3_BUCKET")
-# S3_PATH_RAW = os.getenv("S3_PATH_RAW")
-# FILE_NAMES_RAW = json.loads(os.getenv("FILE_NAMES_RAW"))
 
-# Retrieve AWS credentials from environment variables
-AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY")
-AWS_SECRET_KEY = os.getenv("AWS_SECRET_KEY")
-
-# Configure logging
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 
 class HansardGetter:
+    """
+    A class to handle retrieval of Hansard debate data from S3.
+    """
+
     def __init__(self):
-        self.s3_client = s3.s3_client()
+        """
+        Initialize the HansardGetter with S3 bucket and prefix information.
+        """
+
         self.bucket = S3_BUCKET
-        self.s3_prefix = "data/policy_scanning_data/"
-        logger.info(f"Initialized HansardGetter with bucket: {self.bucket}")
+        self.prefix = "data/policy_scanning_data"
+        self.s3_client = s3.s3_client()
+        self.temp_dir = Path("tmp/debates")
+        self.temp_dir.mkdir(parents=True, exist_ok=True)
+        self.all_debates_retrieved = False
 
-    def s3_client(aws_access_key_id: str = AWS_ACCESS_KEY, aws_secret_access_key: str = AWS_SECRET_KEY) -> BaseClient:
-        """Initialize S3 client"""
-        S3 = boto3.client("s3", aws_access_key_id, aws_secret_access_key)
-        return S3
+    def _get_s3_key(self, key: str) -> str:
+        """Combine prefix and key for S3 operations."""
+        return f"{self.prefix}/{key}"
 
-    def get_parquet(self):
-        key = "enriched/HansardDebates.parquet"
+    def get_debates_parquet(self) -> pd.DataFrame:
+        """
+        Download and return the Hansard debates parquet file from S3.
+
+        Returns:
+            pd.DataFrame: The Hansard debates data.
+
+        Raises:
+            ClientError: If there's an error downloading the file from S3.
+        """
+        key = self._get_s3_key("enriched/HansardDebates.parquet")
         logger.info(f"Downloading debates parquet file: {key}")
         try:
-            s3_key = os.path.join(self.s3_prefix, key)
-            response = s3._download_obj(self.s3_client, self.bucket, s3_key, download_as="dataframe")
-            logger.info(f"Successfully downloaded and read parquet file: {key}")
-            return response
-        except Exception as e:
-            logger.error(f"Error downloading parquet file {key}: {str(e)}")
+            return s3._download_obj(self.s3_client, self.bucket, key, download_as="dataframe")
+        except ClientError as e:
+            logger.error(f"Error downloading debates parquet file: {e}")
             raise
 
-    def get_labelstore(self, keywords=True):
-        """Debates keyword label store"""
+    def get_labelstore(self, keywords: bool = True) -> pd.DataFrame:
+        """
+        Download and return the Hansard debates label store from S3.
+        If the labelstore doesn't exist, return an empty DataFrame.
 
-        if keywords == True:
-            key = "enriched/HansardDebates_LabelStore_keywords.csv"
-        else:
-            key = "enriched/HansardDebates_LabelStore_ml.csv"
+        Args:
+            keywords (bool): If True, download keyword labels. Otherwise, download ML labels.
 
-        logger.info(f"Downloading label store: {key}")
+        Returns:
+            pd.DataFrame: The label store data.
 
+        Raises:
+            ClientError: If there's an error downloading the file from S3.
+        """
+        filename = "HansardDebates_LabelStore_keywords.csv" if keywords else "HansardDebates_LabelStore_ml.csv"
+        key = self._get_s3_key(f"enriched/{filename}")
+        logger.info(f"Attempting to download label store: {key}")
         try:
-            s3_key = os.path.join(self.s3_prefix, key)
-            response = s3._download_obj(self.s3_client, self.bucket, s3_key, download_as="dataframe")
-            logger.info(f"Successfully downloaded and read labelstore: {key}")
-            return response
-        except Exception as e:
-            logger.error(f"Error downloading CSV file {key}: {str(e)}")
+            return s3._download_obj(self.s3_client, self.bucket, key, download_as="dataframe")
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                logger.warning(f"Labelstore {key} does not exist. Returning empty DataFrame.")
+                return pd.DataFrame()
+            else:
+                logger.error(f"Error downloading label store: {e}")
+                raise
+
+    def delete_labelstore(self, keywords: bool = True) -> None:
+        """
+        Delete a labelstore from S3.
+
+        Args:
+            keywords (bool): If True, delete keyword labels. Otherwise, delete ML labels.
+        """
+        filename = "HansardDebates_LabelStore_keywords.csv" if keywords else "HansardDebates_LabelStore_ml.csv"
+        key = self._get_s3_key(f"enriched/{filename}")
+        try:
+            self.s3_client.delete_object(Bucket=self.bucket, Key=key)
+            logger.info(f"Successfully deleted labelstore: {key}")
+        except ClientError as e:
+            logger.error(f"Error deleting labelstore {key}: {e}")
             raise
 
-    def get_latest_debates(self):
+    def get_latest_debates(self) -> List[str]:
+        """
+        Download the latest XML debate files from S3 based on a synchronisation log.
+        Latest files are files that were added on the most recent run of the data collection pipeline.
+
+        Returns:
+            List[str]: A list of paths to downloaded XML files.
+
+        Raises:
+            ClientError: If there's an error downloading the files from S3.
+        """
+        if self.all_debates_retrieved:
+            logger.info("All debates have already been retrieved. No new files to process.")
+            return []
+
         logger.info("Downloading new XML files since last sync")
-        temp_dir = PROJECT_DIR / "tmp/debates"
-        os.makedirs(temp_dir, exist_ok=True)
-        s3_key = os.path.join(self.s3_prefix, "house_of_commons", "files_to_sync.log")
+        sync_file_key = self._get_s3_key("house_of_commons/files_to_sync.log")
         try:
             files_to_sync = (
-                self.s3_client.get_object(Bucket=self.bucket, Key=s3_key)["Body"].read().decode("utf-8").splitlines()
+                self.s3_client.get_object(Bucket=self.bucket, Key=sync_file_key)["Body"]
+                .read()
+                .decode("utf-8")
+                .splitlines()
             )
+
             logger.info(f"Found {len(files_to_sync)} files to sync")
+
             downloaded_files = []
             for file in files_to_sync:
-                local_file_path = os.path.join(temp_dir, os.path.basename(file))
+                local_file_path = self.temp_dir / os.path.basename(file)
+                s3_key = self._get_s3_key(f"house_of_commons/{file}")
                 logger.debug(f"Downloading XML file: {file} to {local_file_path}")
-                s3_key = os.path.join(self.s3_prefix, "house_of_commons", file)
-                self.s3_client.download_file(self.bucket, s3_key, local_file_path)
-                downloaded_files.append(local_file_path)
+                self.s3_client.download_file(self.bucket, s3_key, str(local_file_path))
+                downloaded_files.append(str(local_file_path))
+
             logger.info(f"Successfully downloaded {len(downloaded_files)} XML files")
             return downloaded_files
-        except Exception as e:
-            logger.error(f"Error downloading XML files: {str(e)}")
+        except ClientError as e:
+            logger.error(f"Error downloading latest debates: {e}")
             raise
 
-    def get_all_debates(self):
+    def get_all_debates(self) -> List[str]:
+        """
+        Download all XML debate files from S3.
+
+        Returns:
+            List[str]: A list of paths to downloaded XML files.
+
+        Raises:
+            ClientError: If there's an error downloading the files from S3.
+        """
         logger.info("Retrieving all XML debate files from S3")
-        temp_dir = Path("tmp/debates")
-        temp_dir.mkdir(parents=True, exist_ok=True)
-
-        s3_prefix = os.path.join(self.s3_prefix, "house_of_commons")
-
+        prefix = self._get_s3_key("house_of_commons")
         try:
-            # List all objects in the S3 directory
-            paginator = self.s3_client.get_paginator("list_objects_v2")
-            pages = paginator.paginate(Bucket=self.bucket, Prefix=s3_prefix)
+            all_files = s3._get_bucket_filenames(self.bucket, prefix)
+            xml_files = [f for f in all_files if f.endswith(".xml")]
 
             downloaded_files = []
-            for page in pages:
-                for obj in page.get("Contents", []):
-                    if obj["Key"].endswith(".xml"):
-                        file_name = os.path.basename(obj["Key"])
-                        local_file_path = temp_dir / file_name
-                        logger.debug(f"Downloading XML file: {obj['Key']} to {local_file_path}")
-
-                        self.s3_client.download_file(self.bucket, obj["Key"], str(local_file_path))
-                        downloaded_files.append(str(local_file_path))
+            for file in xml_files:
+                local_file_path = self.temp_dir / os.path.basename(file)
+                logger.debug(f"Downloading XML file: {file} to {local_file_path}")
+                self.s3_client.download_file(self.bucket, file, str(local_file_path))
+                downloaded_files.append(str(local_file_path))
 
             logger.info(f"Successfully downloaded {len(downloaded_files)} XML files")
+            self.all_debates_retrieved = True
             return downloaded_files
-
         except ClientError as e:
-            logger.error(f"ClientError downloading XML files: {str(e)}")
-            raise
-        except Exception as e:
-            logger.error(f"Unexpected error downloading XML files: {str(e)}")
+            logger.error(f"Error downloading all debates: {e}")
             raise
 
-    def get_people_metadata(self):
-        s3_key = os.path.join(self.s3_prefix, "house_of_commons", "people.json")
-        temp_dir = PROJECT_DIR / "tmp/"
+    def get_people_metadata(self) -> dict:
+        """
+        Download and save the people metadata JSON file from S3.
+
+        Returns:
+            dict: The people metadata.
+
+        Raises:
+            ClientError: If there's an error downloading the file from S3.
+        """
+        logger.info("Downloading people metadata")
+        key = self._get_s3_key("house_of_commons/people.json")
         try:
-            response = s3._download_obj(self.s3_client, self.bucket, s3_key, download_as="dict")
-            logger.info(f"Successfully downloaded json file: {s3_key}")
-            with open(os.path.join(temp_dir, "people.json"), "w") as fp:
-                json.dump(response, fp)
-        except Exception as e:
-            logger.error(f"Error downloading CSV file {s3_key}: {str(e)}")
+            metadata = s3._download_obj(self.s3_client, self.bucket, key, download_as="dict")
+
+            temp_dir = Path("tmp")
+            temp_dir.mkdir(exist_ok=True)
+            with open(temp_dir / "people.json", "w") as fp:
+                json.dump(metadata, fp)
+
+            logger.info("Successfully downloaded and saved people metadata")
+            return metadata
+        except ClientError as e:
+            logger.error(f"Error downloading people metadata: {e}")
             raise

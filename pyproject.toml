@@ -31,11 +31,11 @@ datasets = "^2.19.0"
 evaluate = "^0.4.2"
 accelerate = "^0.29.3"
 skypilot = "^0.5.0"
-openai = "^1.35.9"
-langfuse = "^2.38.1"
+openai = ">=1.35.9"
+langfuse = ">=2.38.1"
+ragas= ">=0.1.20"
+llama-index = ">=0.10.65"
 lxml = "^5.3.0"
-polars = "^1.5.0"
-localstack = "^3.7.2"
 
 [tool.poetry.group.test]
 optional = true

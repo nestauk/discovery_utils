@@ -178,9 +178,7 @@ class HansardEnricher:
         Initialize the HansardEnricher with S3 bucket and prefix information.
 
         Args:
-            bucket (str): The name of the S3 bucket.
-            prefix (str): The prefix for all S3 keys.
-            test_flag (bool): If True, use CPU instead of GPU for ML models.
+            test_flag (bool): If True, enrich subset of 10 files and use CPU instead of GPU for ML models.
         """
         self.bucket = S3_BUCKET
         hs.s3.BUCKET_NAME_RAW = self.bucket
@@ -398,7 +396,7 @@ class HansardEnricher:
         }
 
 
-def run_hansard_enrichment(incremental: bool = True, test: bool = False, reset: bool = False):
+def run_hansard_enrichment(incremental: bool = True, test: bool = False):
     """
     Run the Hansard enrichment pipeline.
 
@@ -415,11 +413,10 @@ def run_hansard_enrichment(incremental: bool = True, test: bool = False, reset: 
         processor = HansardProcessor()
         enricher = HansardEnricher(test_flag=test)
 
-        if reset:
+        if not incremental:
             getter.delete_labelstore(keywords=True)
             getter.delete_labelstore(keywords=False)
             logger.info("Labelstores have been reset. Proceeding with full run.")
-            incremental = False
 
         # Retrieve data
         logger.info("Retrieving data from S3")
@@ -470,9 +467,8 @@ def run_hansard_enrichment(incremental: bool = True, test: bool = False, reset: 
 if __name__ == "__main__":
     # Parse pipeline mode, default is incremental
     parser = argparse.ArgumentParser(description="Run Hansard enrichment pipeline")
-    parser.add_argument("--full", action="store_true", help="Run full enrichment instead of incremental")
+    parser.add_argument("--full", action="store_true", help="Reset labelstores and run full enrichment")
     parser.add_argument("--test", action="store_true", help="Use a subset of the data for local testing")
-    parser.add_argument("--reset", action="store_true", help="Reset labelstores and run full enrichment")
     args = parser.parse_args()
 
-    run_hansard_enrichment(not args.full, args.test, args.reset)
+    run_hansard_enrichment(not args.full, args.test)

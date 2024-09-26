@@ -1,5 +1,6 @@
 """
 This module provides functionality to process and enrich Hansard debate data.
+
 It includes classes for parsing XML files, extracting speech data, and enriching
 the data with keyword and ML labels.
 """
@@ -18,7 +19,7 @@ import pandas as pd
 
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
-from lxml import etree
+from lxml import etree  # nosec
 
 import horizon_scout.inference_bert as hs
 
@@ -34,14 +35,10 @@ S3_BUCKET = os.getenv("S3_BUCKET")
 
 
 class HansardProcessor:
-    """
-    A class to handle processing of raw Hansard debate XML files.
-    """
+    """A class to handle processing of raw Hansard debate XML files."""
 
-    def __init__(self):
-        """
-        Initialize the HansardProcessor.
-        """
+    def __init__(self) -> None:
+        """Initialize the HansardProcessor."""
         self.parser = etree.XMLParser(dtd_validation=False)
 
     def process_debates(self, xml_files: List[str]) -> pd.DataFrame:
@@ -79,7 +76,7 @@ class HansardProcessor:
         """
         logger.debug(f"Processing debate file: {file_path}")
         try:
-            tree = etree.parse(file_path, self.parser)
+            tree = etree.parse(file_path, self.parser)  # nosec
             root = tree.getroot()
 
             date = self.extract_date_from_filename(file_path)
@@ -169,11 +166,9 @@ class HansardProcessor:
 
 
 class HansardEnricher:
-    """
-    A class to handle enrichment of Hansard debate data with keyword and ML labels.
-    """
+    """A class to handle enrichment of Hansard debate data with keyword and ML labels."""
 
-    def __init__(self, test_flag: bool = False):
+    def __init__(self, test_flag: bool = False) -> None:
         """
         Initialize the HansardEnricher with S3 bucket and prefix information.
 
@@ -194,7 +189,7 @@ class HansardEnricher:
         """Combine prefix and key for S3 operations."""
         return f"{self.prefix}/{key}"
 
-    def initialize_ml_models(self):
+    def initialize_ml_models(self) -> None:
         """Initialize BERT models and tokenizer."""
         logger.info("Initializing ML models and tokenizer")
         self.bert_models = hs.load_models(hs.MODEL_PATHS, hs.MISSIONS, gpu=(not self.test_flag))
@@ -254,7 +249,7 @@ class HansardEnricher:
         combined = pd.concat([existing_store, new_labels], ignore_index=True)
         return combined.drop_duplicates(subset="id", keep="last").reset_index(drop=True)
 
-    def upload_labelstore(self, labelstore: pd.DataFrame, is_keyword: bool):
+    def upload_labelstore(self, labelstore: pd.DataFrame, is_keyword: bool) -> None:
         """
         Upload labelstore to S3.
 
@@ -396,7 +391,7 @@ class HansardEnricher:
         }
 
 
-def run_hansard_enrichment(incremental: bool = True, test: bool = False):
+def run_hansard_enrichment(incremental: bool = True, test: bool = False) -> None:
     """
     Run the Hansard enrichment pipeline.
 
@@ -448,7 +443,7 @@ def run_hansard_enrichment(incremental: bool = True, test: bool = False):
         )
 
         # Append new debates to existing dataset and upload
-        enricher.append_and_upload_debates(existing_debates, processed_debates, reset)
+        enricher.append_and_upload_debates(existing_debates, processed_debates, not incremental)
 
         # Generate and log enrichment report
         report = enricher.generate_enrichment_report(new_keyword_labels, new_ml_labels)

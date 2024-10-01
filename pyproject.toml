@@ -19,47 +19,47 @@ python = ">=3.10, <3.12"
 boto3 = "*"
 urllib3 = "<2"
 pandas = "*"
-pyarrow = "^15.0.0"
-currencyconverter = "^0.17.16"
-df2gspread = "^1.0.4"
-python-dotenv = "^1.0.1"
-nltk = "^3.8.1"
-matplotlib = "^3.8.4"
-sentence-transformers = "^2.7.0"
-lxml = "^5.2"
-seaborn = "^0.13.2"
-datasets = "^2.19.0"
-evaluate = "^0.4.2"
-accelerate = "^0.29.3"
-skypilot = "^0.5.0"
-openai = "^1.35.9"
-langfuse = "^2.38.1"
-ragas = "^0.1.13"
-llama-index = "^0.10.65"
+pyarrow = ">=15.0.0"
+currencyconverter = ">=0.17.16"
+df2gspread = ">=1.0.4"
+python-dotenv = ">=1.0.1"
+nltk = ">=3.8.1"
+matplotlib = ">=3.8.4"
+sentence-transformers = ">=2.7.0"
+seaborn = ">=0.13.2"
+datasets = ">=2.19.0"
+evaluate = ">=0.4.2"
+accelerate = ">=0.29.3"
+skypilot = ">=0.5.0"
+openai = ">=1.35.9"
+langfuse = ">=2.38.1"
+ragas= ">=0.1.20"
+llama-index = ">=0.10.65"
+lxml = ">=5.3.0"
 
 [tool.poetry.group.test]
 optional = true
 
 [tool.poetry.group.test.dependencies]
-pytest = "^7.1.1" # Allows for testing of the project
-pytest-cov = "^4.0.0" # Allows to run coverage of the project
-moto = "^3.1.6" # Allows for mocking of AWS services
+pytest = ">=7.1.1" # Allows for testing of the project
+pytest-cov = ">=4.0.0" # Allows to run coverage of the project
+moto = ">=3.1.6" # Allows for mocking of AWS services
 
 [tool.poetry.group.lint]
 optional = true
 
 [tool.poetry.group.lint.dependencies]
-flake8 = "^4.0.1"                         # Style Guide Enforcement
-pyproject-flake8 = "^0.0.1-alpha.4"       # Allows configuration of flake 8 from pyproject.toml
-flake8-bugbear = "^22.3.23"               # Finding likely bugs and design problems in your program.
-flake8-print = "^4.0.0"                   # Check for print statements in python files.
-flake8-docstrings = "^1.6.0"              # Include checks provided by pep257.
-flake8-annotations = "^2.8.0"             # check for presence of type annotations in function definitions.
-isort = "^5.10.1"                         # Sort imports
-yamllint = "^1.26.3"                      # Linter for YAML files
-bandit = {version = "^1.7.4", extras = ["toml"]}  # Security linter
-pre-commit = "^2.18.1"                    # Runs a pipeline before commiting code
-black = "^22.6.0"                         # Python style checks
+flake8 = ">=4.0.1"                         # Style Guide Enforcement
+pyproject-flake8 = ">=4.0.0"       # Allows configuration of flake 8 from pyproject.toml
+flake8-bugbear = ">=22.3.23"               # Finding likely bugs and design problems in your program.
+flake8-print = ">=4.0.0"                   # Check for print statements in python files.
+flake8-docstrings = ">=1.6.0"              # Include checks provided by pep257.
+flake8-annotations = ">=2.8.0"             # check for presence of type annotations in function definitions.
+isort = ">=5.10.1"                         # Sort imports
+yamllint = ">=1.26.3"                      # Linter for YAML files
+bandit = {version = ">=1.7.4", extras = ["toml"]}  # Security linter
+pre-commit = ">=2.18.1"                    # Runs a pipeline before commiting code
+black = ">=22.6.0"                         # Python style checks
 
 
 [tool.poetry.group.dev.dependencies]

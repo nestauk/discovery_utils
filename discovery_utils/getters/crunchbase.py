@@ -89,7 +89,7 @@ class CrunchbaseGetter:
 
     def _get_table(self, key: str) -> pd.DataFrame:
         """Download parquet table from S3"""
-        logger.info(f"Downloading debates parquet file: {key}")
+        logger.info(f"Downloading parquet file: {key}")
         try:
             response = s3._download_obj(
                 self.s3_client,

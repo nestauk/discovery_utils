@@ -1,11 +1,8 @@
 """
-Load Crunchbase data
+Script to create embeddings for Crunchbase companies and upload them to S3
 
-Initialise lancedb
-Create the embeddings
-Upload to S3
-*
-Separate utils for loading the embeddings from S3
+Usage example:
+python discovery_utils/enrichment/embeddings/crunchbase_embeddings.py
 """
 import argparse
 import os

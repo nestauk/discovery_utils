@@ -68,7 +68,7 @@ def download_lancedb_embeddings(
         local_path (str): Local path to store the embeddings
     """
     # Check if folder already exists
-    _local_path = f"{local_path}/{embeddings}/"
+    _local_path = PROJECT_DIR / f"{local_path}/{embeddings}/"
 
     if (not overwrite) and (os.path.exists(_local_path)):
         logging.info(f"Folder {_local_path} already exists. Set overwrite=True to download again.")
@@ -77,7 +77,7 @@ def download_lancedb_embeddings(
         s3_key = f"{s3_path}/{embeddings}.zip"
         local_key = PROJECT_DIR / f"{local_path}/{embeddings}.zip"
 
-        os.makedirs(_local_path, exist_ok=True)
+        _local_path.mkdir(parents=True, exist_ok=True)
 
         try:
             s3_client.download_file(os.environ["S3_BUCKET"], s3_key, local_key)
@@ -86,5 +86,5 @@ def download_lancedb_embeddings(
             logging.error(f"Error downloading {s3_key}: {str(e)}")
             raise
 
-        shutil.unpack_archive(local_key, _local_path)
+        shutil.unpack_archive(local_key, str(_local_path))
         logging.info(f"Unzipped {local_key} to {_local_path}")

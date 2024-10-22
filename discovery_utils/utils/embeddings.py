@@ -12,7 +12,7 @@ from discovery_utils import logging
 from discovery_utils.utils import s3
 
 
-LOCAL_VECTOR_DB_PATH = "tmp/vector_db"
+LOCAL_VECTOR_DB_PATH = PROJECT_DIR / "tmp/vector_db"
 
 
 def add_embeddings(df: pd.DataFrame, text_col: str = "text", model_name: str = "all-MiniLM-L6-v2") -> pd.DataFrame:
@@ -47,7 +47,7 @@ def load_lancedb_embeddings(
     """
     # Load the lanceDB
     download_lancedb_embeddings(embeddings)
-    db = lancedb.connect(PROJECT_DIR / f"{LOCAL_VECTOR_DB_PATH}/{embeddings}")
+    db = lancedb.connect(f"{LOCAL_VECTOR_DB_PATH}/{embeddings}")
     logging.info(f"Connected with database {embeddings}. Available tables: {db.table_names()}")
     return db
 
@@ -68,14 +68,14 @@ def download_lancedb_embeddings(
         local_path (str): Local path to store the embeddings
     """
     # Check if folder already exists
-    _local_path = PROJECT_DIR / f"{local_path}/{embeddings}/"
+    _local_path = f"{local_path}/{embeddings}/"
 
     if (not overwrite) and (os.path.exists(_local_path)):
         logging.info(f"Folder {_local_path} already exists. Set overwrite=True to download again.")
     else:
         s3_client = s3.s3_client()
         s3_key = f"{s3_path}/{embeddings}.zip"
-        local_key = PROJECT_DIR / f"{local_path}/{embeddings}.zip"
+        local_key = f"{local_path}/{embeddings}.zip"
 
         _local_path.mkdir(parents=True, exist_ok=True)
 

@@ -3,9 +3,12 @@ discovery_utils.getters.gtr.py
 
 Getters for Gateway to Research data
 """
+import datetime
 import logging
 import os
 import re
+
+from typing import Dict
 
 import pandas as pd
 
@@ -41,6 +44,7 @@ class GtrGetter:
         self._organisations = None
         self._persons = None
         self._funds = None
+        self._projects_enriched = None
 
     def _get_latest_data_version(self) -> str:
         """Find the latest version based on S3 folder timestamps."""
@@ -125,3 +129,77 @@ class GtrGetter:
         if self._funds is None:
             self._funds = self._get_gtr_table("funds")
         return self._funds
+
+    @property
+    def projects_enriched(self) -> pd.DataFrame:
+        """Get enriched projects data"""
+        if self._projects_enriched is None:
+            self._projects_enriched = self._link_projects_to_dates_and_funds()
+        return self._projects_enriched
+
+    def _link_projects_to_dates_and_funds(self) -> pd.DataFrame:
+        """Link projects to their start and end dates, and funding ids"""
+        projects_df = (
+            # Go through projects and get their start and end dates, and funding ids
+            pd.concat(
+                [
+                    self.projects.drop(columns=["links", "start", "end"]),
+                    pd.json_normalize(self.projects["links"].apply(self._get_project_dates_and_funds)),
+                ],
+                axis=1,
+            )
+            # Get the amount of funding for each project
+            .merge(
+                self.funds[["id", "valuePounds", "category"]],
+                left_on="funds_id",
+                right_on="id",
+                how="left",
+                suffixes=("", "_funds"),
+            ).drop(columns=["id_funds"])
+        )
+        # Normalise the funding data
+        projects_df = pd.concat(
+            [projects_df.drop(columns=["valuePounds"]), pd.json_normalize(projects_df["valuePounds"])], axis=1
+        )
+        # Just in case, check that only one currency is used
+        assert len(projects_df["currencyCode"].unique()) == 1
+        return projects_df.drop(columns=["currencyCode"]).rename(
+            columns={"value": "amount", "category": "funds_category"}
+        )
+
+    @staticmethod
+    def _get_project_dates_and_funds(links: Dict) -> Dict:
+        """Get the start and end dates for a project"""
+        start_dates = []
+        end_dates = []
+        funds_id = []
+        # Find the link that's pertinent to the project's funding
+        for link in links["link"]:
+            if link["rel"] == "FUND":
+                start_dates.append(link["start"])
+                end_dates.append(link["end"])
+                funds_id.append(link["href"].split("/")[-1])
+
+        if len(start_dates) > 1:
+            # Unlikely to have multiple funds, but just in case
+            logging.warning(f"Multiple funds for one project: {funds_id}")
+
+        if len(start_dates) > 0:
+            start_date = min(start_dates)
+            start_date = datetime.datetime.fromtimestamp(start_date / 1e3).strftime("%Y-%m-%d")
+            end_date = max(end_dates)
+            end_date = datetime.datetime.fromtimestamp(end_date / 1e3).strftime("%Y-%m-%d")
+            funds_id = funds_id[0]
+        else:
+            start_date = None
+            end_date = None
+            funds_id = None
+        return {"start": start_date, "end": end_date, "funds_id": funds_id}
+
+    def get_project_organisations(self) -> pd.DataFrame:
+        """Get organisations for each project"""
+        pass
+
+    def get_project_persons(self) -> pd.DataFrame:
+        """Get persons for each project"""
+        pass

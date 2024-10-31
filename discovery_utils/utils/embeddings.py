@@ -1,6 +1,8 @@
 import os
 import shutil
 
+from pathlib import Path
+
 import lancedb
 import pandas as pd
 
@@ -77,7 +79,7 @@ def download_lancedb_embeddings(
         s3_key = f"{s3_path}/{embeddings}.zip"
         local_key = f"{local_path}/{embeddings}.zip"
 
-        _local_path.mkdir(parents=True, exist_ok=True)
+        Path(_local_path).mkdir(parents=True, exist_ok=True)
 
         try:
             s3_client.download_file(os.environ["S3_BUCKET"], s3_key, local_key)

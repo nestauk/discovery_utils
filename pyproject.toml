@@ -33,12 +33,17 @@ accelerate = ">=0.29.3"
 skypilot = ">=0.5.0"
 openai = ">=1.35.9"
 langfuse = ">=2.38.1"
-ragas= ">=0.1.20"
 llama-index = ">=0.10.65"
 pyalex = "^0.15.1"
 lxml = ">=5.3.0"
 huggingface-hub = "^0.25.1"
 lancedb = "^0.14.0"
+
+[tool.poetry.group.evals]
+optional = true
+
+[tool.poetry.group.evals.dependencies]
+ragas= ">=0.1.20"
 
 [tool.poetry.group.test]
 optional = true

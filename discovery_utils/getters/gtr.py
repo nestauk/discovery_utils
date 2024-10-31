@@ -49,6 +49,7 @@ class GtrGetter:
         self._projects_persons = None
         self._projects_organisations = None
         self._persons_organisations = None
+        self._default_text_fields = ["title", "abstractText", "techAbstractText", "potentialImpact"]
 
     def _get_latest_data_version(self) -> str:
         """Find the latest version based on S3 folder timestamps."""
@@ -162,6 +163,11 @@ class GtrGetter:
             self._persons_organisations = self._link_persons_to_organisations()
         return self._persons_organisations
 
+    @property
+    def projects_enriched(self) -> pd.DataFrame:
+        """Get projects data enriched with funds information and urls"""
+        return self.projects_funds.merge(self.get_projects_urls(), on="id", how="left")
+
     @staticmethod
     def _get_links_project_dates_and_funds(links: Dict) -> Dict:
         """Get the start and end dates for a project"""
@@ -183,7 +189,10 @@ class GtrGetter:
             start_date = min(start_dates)
             start_date = datetime.datetime.fromtimestamp(start_date / 1e3).strftime("%Y-%m-%d")
             end_date = max(end_dates)
-            end_date = datetime.datetime.fromtimestamp(end_date / 1e3).strftime("%Y-%m-%d")
+            if end_date is not None:
+                end_date = datetime.datetime.fromtimestamp(end_date / 1e3).strftime("%Y-%m-%d")
+            else:
+                end_date = None
             funds_id = funds_id[0]
         else:
             start_date = None
@@ -216,10 +225,7 @@ class GtrGetter:
             [projects_df.drop(columns=["valuePounds"]), pd.json_normalize(projects_df["valuePounds"])], axis=1
         )
         # Just in case, check that only one currency is used
-        assert len(projects_df["currencyCode"].unique()) == 1
-        return projects_df.drop(columns=["currencyCode"]).rename(
-            columns={"value": "amount", "category": "funds_category"}
-        )
+        return projects_df.rename(columns={"value": "amount", "category": "funds_category"})
 
     @staticmethod
     def _get_links(links: Dict, endpoint: str, url_position: int = -2) -> pd.DataFrame:
@@ -300,3 +306,33 @@ class GtrGetter:
         return df.merge(
             self.organisations, left_on="organisations_id", right_on="id", how="left", suffixes=("", "_organisations")
         ).drop(columns=["id_organisations"])
+
+    def get_projects_urls(self) -> pd.DataFrame:
+        """Get URLs for projects"""
+        return (
+            self.projects[["id", "identifiers"]]
+            .copy()
+            .assign(refs=lambda df: df.identifiers.apply(lambda x: x["identifier"][0]["value"]))
+            .assign(url=lambda df: "https://gtr.ukri.org/projects?ref=" + df.refs)
+            .drop(columns=["identifiers", "refs"])
+        )
+
+    def get_projects_text(self) -> pd.DataFrame:
+        """Get full available text data for projects"""
+        text_fields = self._default_text_fields
+        boilerplate_empty_text = "Abstracts are not currently available in GtR for all funded research. \
+            This is normally because the abstract was not required at the time of proposal submission, \
+            but may be because it included sensitive information such as personal details"
+
+        columns = ["id"] + text_fields
+
+        return (
+            self.projects[columns]
+            .copy()
+            .fillna("")
+            .astype({field: str for field in text_fields})
+            .assign(text=lambda df: df[text_fields].apply(lambda x: " ".join(x), axis=1))
+            .assign(text=lambda df: df.text.str.strip())
+            .assign(text=lambda df: df.text.apply(lambda x: re.sub(boilerplate_empty_text, "", x)))
+            .drop(columns=text_fields)
+        )

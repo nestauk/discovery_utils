@@ -72,6 +72,8 @@ if __name__ == "__main__":
 
         id: str
         title: str
+        start: str
+        end: str
         url: str
         text: str = model.SourceField()  # the text to embed
         vector: Vector(model.ndims()) = model.VectorField()  # the vector embedding
@@ -89,52 +91,34 @@ if __name__ == "__main__":
         texts_df = pd.DataFrame(
             {
                 "id": ["1", "2", "3"],
-                "name": ["Company 1", "Company 2", "Company 3"],
-                "short_description": [
-                    "Company 1 short description",
-                    "Company 2 short description",
-                    "Company 3 short description",
+                "title": ["Project 1", "Project 2", "Project 3"],
+                "text": [
+                    "This is a dummy project description for project 1",
+                    "This is a dummy project description for project 2",
+                    "This is a dummy project description for project 3",
                 ],
-                "homepage_url": ["https://company1.com", "https://company2.com", "https://company3.com"],
-                "country_code": ["US", "GB", "DE"],
-                "region": ["North America", "Europe", "Europe"],
-                "city": ["New York", "London", "Berlin"],
-                "status": ["operating", "closed", "ipo"],
-                "employee_count": ["1000", "500", "2000"],
-                "text": ["Company 1 description", "Company 2 description", "Company 3 description"],
+                "start": ["2020-01-01", "2020-02-01", "2020-03-01"],
+                "end": ["2021-01-01", "2021-02-01", "2021-03-01"],
+                "amount": ["1000", "2000", "3000"],
+                "url": [
+                    "https://example.com/project1",
+                    "https://example.com/project2",
+                    "https://example.com/project3",
+                ],
             }
         )
     else:
-        texts_df = (
-            GTR.projects[
-                [
-                    "id",
-                    "title",
-                    "abstractText",
-                    "techAbstractText",
-                    "potentialImpact",
-                    "identifiers",
-                ]
+        texts_df = GTR.projects_enriched.merge(GTR.get_projects_text(), on="id")[
+            [
+                "id",
+                "title",
+                "text",
+                "start",
+                "end",
+                "amount",
+                "url",
             ]
-            .copy()
-            # define url
-            .assign(refs=lambda df: df.identifiers.apply(lambda x: x["identifier"][0]["value"]))
-            .assign(url=lambda df: "https://gtr.ukri.org/projects?ref=" + df.refs)
-            # combine text fields
-            .astype(
-                {
-                    "abstractText": str,
-                    "techAbstractText": str,
-                    "potentialImpact": str,
-                }
-            )
-            .fillna("")
-            .assign(
-                text=lambda df: df.title + " " + df.abstractText + " " + df.techAbstractText + " " + df.potentialImpact
-            )
-            .drop(columns=["abstractText", "techAbstractText", "potentialImpact", "identifiers", "refs"])
-        )
-
+        ]
     # Remove companies with no descriptions
     texts_df = texts_df[texts_df["text"].str.strip() != ""]
 

@@ -1,0 +1,36 @@
+---
+name: crunchbase-embeddings
+
+resources:
+  cloud: aws
+  instance_type: g5.xlarge
+  region: eu-west-2
+envs:
+  S3_BUCKET: discovery-iss
+  BUCKET_NAME_RAW: discovery-iss
+  AWS_DEFAULT_REGION: eu-west-2
+
+setup: |
+  echo "Starting setup..."
+
+  # Install poetry
+  curl -sSL https://install.python-poetry.org | python3 -
+  export PATH="/home/ubuntu/.local/bin:$PATH"
+
+  # Clone and set up the project
+  cd ~/sky_workdir
+  git clone -b 56-massive-embeddings https://github.com/nestauk/discovery_utils.git
+  cd discovery_utils
+  poetry config virtualenvs.in-project true
+  poetry install
+
+run: |
+  echo "cd into script dir"
+  cd ~/sky_workdir/discovery_utils/discovery_utils/enrichment/embeddings
+  export PATH="/home/ubuntu/.local/bin:$PATH"
+
+  echo "activate environment"
+  source $(poetry env info --path)/bin/activate
+
+  echo "run enrichment script"
+  python crunchbase_embeddings.py --test

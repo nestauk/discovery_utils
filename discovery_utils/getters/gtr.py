@@ -263,7 +263,7 @@ class GtrGetter:
         """Link projects to their organisations and persons"""
         df = (
             self.projects.assign(
-                orgs_persons=self.projects["links"].apply(self._get_project_organisations_and_persons)
+                orgs_persons=self.projects["links"].apply(self._get_links_project_organisations_and_persons)
             )
             .explode("orgs_persons")
             .reset_index(drop=True)

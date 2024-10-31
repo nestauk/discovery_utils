@@ -9,6 +9,7 @@ import os
 import re
 
 from typing import Dict
+from typing import List
 
 import pandas as pd
 
@@ -44,7 +45,10 @@ class GtrGetter:
         self._organisations = None
         self._persons = None
         self._funds = None
-        self._projects_enriched = None
+        self._projects_funds = None
+        self._projects_persons = None
+        self._projects_organisations = None
+        self._persons_organisations = None
 
     def _get_latest_data_version(self) -> str:
         """Find the latest version based on S3 folder timestamps."""
@@ -131,44 +135,35 @@ class GtrGetter:
         return self._funds
 
     @property
-    def projects_enriched(self) -> pd.DataFrame:
-        """Get enriched projects data"""
-        if self._projects_enriched is None:
-            self._projects_enriched = self._link_projects_to_dates_and_funds()
-        return self._projects_enriched
+    def projects_funds(self) -> pd.DataFrame:
+        """Get projects data enriched with start and end dates, and funding amounts"""
+        if self._projects_funds is None:
+            self._projects_funds = self._link_projects_to_dates_and_funds()
+        return self._projects_funds
 
-    def _link_projects_to_dates_and_funds(self) -> pd.DataFrame:
-        """Link projects to their start and end dates, and funding ids"""
-        projects_df = (
-            # Go through projects and get their start and end dates, and funding ids
-            pd.concat(
-                [
-                    self.projects.drop(columns=["links", "start", "end"]),
-                    pd.json_normalize(self.projects["links"].apply(self._get_project_dates_and_funds)),
-                ],
-                axis=1,
-            )
-            # Get the amount of funding for each project
-            .merge(
-                self.funds[["id", "valuePounds", "category"]],
-                left_on="funds_id",
-                right_on="id",
-                how="left",
-                suffixes=("", "_funds"),
-            ).drop(columns=["id_funds"])
-        )
-        # Normalise the funding data
-        projects_df = pd.concat(
-            [projects_df.drop(columns=["valuePounds"]), pd.json_normalize(projects_df["valuePounds"])], axis=1
-        )
-        # Just in case, check that only one currency is used
-        assert len(projects_df["currencyCode"].unique()) == 1
-        return projects_df.drop(columns=["currencyCode"]).rename(
-            columns={"value": "amount", "category": "funds_category"}
-        )
+    @property
+    def projects_persons(self) -> pd.DataFrame:
+        """Get projects data linked to persons"""
+        if self._projects_persons is None:
+            self._link_projects_to_persons_and_organisations()
+        return self._projects_persons
+
+    @property
+    def projects_organisations(self) -> pd.DataFrame:
+        """Get projects data linked to organisations"""
+        if self._projects_organisations is None:
+            self._link_projects_to_persons_and_organisations()
+        return self._projects_organisations
+
+    @property
+    def persons_organisations(self) -> pd.DataFrame:
+        """Get persons data linked to organisations"""
+        if self._persons_organisations is None:
+            self._persons_organisations = self._link_persons_to_organisations()
+        return self._persons_organisations
 
     @staticmethod
-    def _get_project_dates_and_funds(links: Dict) -> Dict:
+    def _get_links_project_dates_and_funds(links: Dict) -> Dict:
         """Get the start and end dates for a project"""
         start_dates = []
         end_dates = []
@@ -196,10 +191,112 @@ class GtrGetter:
             funds_id = None
         return {"start": start_date, "end": end_date, "funds_id": funds_id}
 
-    def get_project_organisations(self) -> pd.DataFrame:
-        """Get organisations for each project"""
-        pass
+    def _link_projects_to_dates_and_funds(self) -> pd.DataFrame:
+        """Link projects to their start and end dates, and funding ids"""
+        projects_df = (
+            # Go through projects and get their start and end dates, and funding ids
+            pd.concat(
+                [
+                    self.projects.drop(columns=["links", "start", "end"]),
+                    pd.json_normalize(self.projects["links"].apply(self._get_links_project_dates_and_funds)),
+                ],
+                axis=1,
+            )
+            # Get the amount of funding for each project
+            .merge(
+                self.funds[["id", "valuePounds", "category"]],
+                left_on="funds_id",
+                right_on="id",
+                how="left",
+                suffixes=("", "_funds"),
+            ).drop(columns=["id_funds"])
+        )
+        # Normalise the funding data
+        projects_df = pd.concat(
+            [projects_df.drop(columns=["valuePounds"]), pd.json_normalize(projects_df["valuePounds"])], axis=1
+        )
+        # Just in case, check that only one currency is used
+        assert len(projects_df["currencyCode"].unique()) == 1
+        return projects_df.drop(columns=["currencyCode"]).rename(
+            columns={"value": "amount", "category": "funds_category"}
+        )
 
-    def get_project_persons(self) -> pd.DataFrame:
-        """Get persons for each project"""
-        pass
+    @staticmethod
+    def _get_links(links: Dict, endpoint: str, url_position: int = -2) -> pd.DataFrame:
+        """Link persons to their organisations
+
+        Args:
+            links (Dict): Links dictionary
+            endpoint (str): The endpoint for which to find links
+            url_position (int, optional): Position of the endpoint in the URL. Defaults to -2.
+        """
+        extracted_links = []
+        for link in links["link"]:
+            split_link = link["href"].split("/")
+            if split_link[url_position] == endpoint:
+                extracted_links.append(
+                    {f"{endpoint}_rel": link["rel"], f"{endpoint}_id": split_link[-1], "endpoint": split_link[-2]}
+                )
+        return extracted_links
+
+    def _get_links_project_organisations_and_persons(self, links: Dict) -> List[Dict]:
+        """Get the start and end dates for a project
+
+        Args:
+            links (Dict): Links for a project
+
+        Returns:
+            Tuple[List[Dict], List[Dict]]: Organisations and persons for the project, in the format:
+                ([{"rel": "ORG", "organisation_id": "123"}], [{"rel": "PER", "person_id": "456"}])
+                The possible values of "rel" are provided in repo's documentation.
+
+        """
+        return self._get_links(links, "organisations", -2) + self._get_links(links, "persons", -2)
+
+    def _link_projects_to_persons_and_organisations(self) -> None:
+        """Link projects to their organisations and persons"""
+        df = (
+            self.projects.assign(
+                orgs_persons=self.projects["links"].apply(self._get_project_organisations_and_persons)
+            )
+            .explode("orgs_persons")
+            .reset_index(drop=True)
+        )
+        df = pd.concat([df.drop(columns=["orgs_persons"]), pd.json_normalize(df["orgs_persons"])], axis=1)
+        self._projects_persons = (
+            df
+            # Select only links to persons
+            .query("endpoint == 'persons'")[["id", "title", "persons_rel", "persons_id"]]
+            # Merge with persons data
+            .merge(self.persons, left_on="persons_id", right_on="id", how="left", suffixes=("", "_persons"))
+            # Drop unnecessary columns
+            .drop(columns=["id_persons"])
+            # to do: add organisations for each person
+        )
+        self._projects_organisations = (
+            df
+            # Select only links to organisations
+            .query("endpoint == 'organisations'")[["id", "title", "organisations_rel", "organisations_id"]]
+            # Merge with organisations data
+            .merge(
+                self.organisations,
+                left_on="organisations_id",
+                right_on="id",
+                how="left",
+                suffixes=("", "_organisations"),
+            )
+            # Drop unnecessary columns
+            .drop(columns=["id_organisations"])
+        )
+
+    def _link_persons_to_organisations(self) -> None:
+        """Link persons to their organisations"""
+        df = (
+            self.persons.assign(orgs=lambda df: df["links"].apply(lambda x: self._get_links(x, "organisations", -2)))
+            .explode("orgs")
+            .reset_index(drop=True)
+        )
+        df = pd.concat([df.drop(columns=["orgs"]), pd.json_normalize(df["orgs"])], axis=1)
+        return df.merge(
+            self.organisations, left_on="organisations_id", right_on="id", how="left", suffixes=("", "_organisations")
+        ).drop(columns=["id_organisations"])

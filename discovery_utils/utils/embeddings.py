@@ -38,9 +38,7 @@ def add_embeddings(df: pd.DataFrame, text_col: str = "text", model_name: str = "
     return df
 
 
-def load_lancedb_embeddings(
-    embeddings: str,
-) -> LanceDBConnection:
+def load_lancedb_embeddings(embeddings: str, local_path: str = LOCAL_VECTOR_DB_PATH) -> LanceDBConnection:
     """
     Load the lancedb embeddings
 
@@ -48,8 +46,10 @@ def load_lancedb_embeddings(
         embeddings (str): Name of the embeddings to load
     """
     # Load the lanceDB
-    download_lancedb_embeddings(embeddings)
-    db = lancedb.connect(f"{LOCAL_VECTOR_DB_PATH}/{embeddings}")
+    if local_path is None:
+        raise ValueError("Vector database path is not set")
+    download_lancedb_embeddings(embeddings, overwrite=False, local_path=local_path)
+    db = lancedb.connect(f"{local_path}/{embeddings}")
     logging.info(f"Connected with database {embeddings}. Available tables: {db.table_names()}")
     return db
 

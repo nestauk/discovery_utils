@@ -8,11 +8,13 @@ import logging
 import os
 import re
 
+from pathlib import Path
 from typing import Dict
 from typing import List
 
 import pandas as pd
 
+from discovery_utils.utils import embeddings
 from discovery_utils.utils import s3
 
 
@@ -26,7 +28,7 @@ logger = logging.getLogger(__name__)
 class GtrGetter:
     """Class to get Gateway to Research data from S3"""
 
-    def __init__(self, use_latest_version: bool = True, data_version: str = None) -> None:
+    def __init__(self, use_latest_version: bool = True, data_version: str = None, vector_db_path: Path = None) -> None:
         """Initialise GtrGetter
 
         Args:
@@ -50,6 +52,10 @@ class GtrGetter:
         self._projects_organisations = None
         self._persons_organisations = None
         self._default_text_fields = ["title", "abstractText", "techAbstractText", "potentialImpact"]
+        # Vector DB
+        self.VectorDB = embeddings.VectorDB(
+            db_path=vector_db_path, db_name="gtr-lancedb", table_name="project_embeddings", model="all-MiniLM-L6-v2"
+        )
 
     def _get_latest_data_version(self) -> str:
         """Find the latest version based on S3 folder timestamps."""
@@ -336,3 +342,16 @@ class GtrGetter:
             .assign(text=lambda df: df.text.apply(lambda x: re.sub(boilerplate_empty_text, "", x)))
             .drop(columns=text_fields)
         )
+
+    @property
+    def vector_db(self) -> embeddings.LanceDBConnection:
+        """Get the LanceDB connection"""
+        return self.VectorDB.vector_db
+
+    def text_search(self, query: str, n_results: int = 10) -> pd.DataFrame:
+        """Search the LanceDB for the query"""
+        return self.VectorDB.text_search(query, n_results)
+
+    def vector_search(self, query: str, n_results: int = 10) -> pd.DataFrame:
+        """Search the LanceDB for the query"""
+        return self.VectorDB.vector_search(query, n_results)

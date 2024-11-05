@@ -7,8 +7,11 @@ import logging
 import os
 import re
 
+from pathlib import Path
+
 import pandas as pd
 
+from discovery_utils.utils import embeddings
 from discovery_utils.utils import s3
 
 
@@ -22,7 +25,7 @@ logger = logging.getLogger(__name__)
 class CrunchbaseGetter:
     """Class to get Crunchbase data from S3"""
 
-    def __init__(self, use_latest_version: bool = True, data_version: str = None) -> None:
+    def __init__(self, use_latest_version: bool = True, data_version: str = None, vector_db_path: Path = None) -> None:
         """Initialise CrunchbaseGetter
 
         Args:
@@ -58,6 +61,13 @@ class CrunchbaseGetter:
         self._organisation_categories = None
         self._category_groups = None
         self._group_to_categories = None
+        # Vector DB
+        self.VectorDB = embeddings.VectorDB(
+            db_path=vector_db_path,
+            db_name="crunchbase-lancedb",
+            table_name="company_embeddings",
+            model="all-MiniLM-L6-v2",
+        )
 
     def _get_latest_data_version(self) -> str:
         """Find the latest Crunchbase version based on S3 folder timestamps."""
@@ -287,3 +297,16 @@ class CrunchbaseGetter:
                 .sort_values(["group", "category"])
             )[["group", "category"]]
         return self._group_to_categories
+
+    @property
+    def vector_db(self) -> embeddings.LanceDBConnection:
+        """Get the LanceDB connection"""
+        return self.VectorDB.vector_db
+
+    def text_search(self, query: str, n_results: int = 10) -> pd.DataFrame:
+        """Search the LanceDB for the query"""
+        return self.VectorDB.text_search(query, n_results)
+
+    def vector_search(self, query: str, n_results: int = 10) -> pd.DataFrame:
+        """Search the LanceDB for the query"""
+        return self.VectorDB.vector_search(query, n_results)

@@ -11,8 +11,6 @@ from pathlib import Path
 
 import pandas as pd
 
-from sentence_transformers import SentenceTransformer
-
 from discovery_utils.utils import embeddings
 from discovery_utils.utils import s3
 
@@ -64,13 +62,12 @@ class CrunchbaseGetter:
         self._category_groups = None
         self._group_to_categories = None
         # Vector DB
-        self._vector_db_path = vector_db_path
-        self._vector_db_name = "crunchbase-lancedb"
-        self._vector_db_table_name = "company_embeddings"
-        self._vector_model_name = "all-MiniLM-L6-v2"
-        self._vector_model = None
-        self._vector_db_connection = None
-        self._vector_db = None
+        self.VectorDB = embeddings.VectorDB(
+            db_path=vector_db_path,
+            db_name="crunchbase-lancedb",
+            table_name="company_embeddings",
+            model="all-MiniLM-L6-v2",
+        )
 
     def _get_latest_data_version(self) -> str:
         """Find the latest Crunchbase version based on S3 folder timestamps."""
@@ -304,30 +301,12 @@ class CrunchbaseGetter:
     @property
     def vector_db(self) -> embeddings.LanceDBConnection:
         """Get the LanceDB connection"""
-        if self._vector_db is None:
-            self._vector_db_connection = embeddings.load_lancedb_embeddings(
-                self._vector_db_name, local_path=self._vector_db_path
-            )
-            self._vector_db = self._vector_db_connection.open_table(self._vector_db_table_name)
-            # Enable full text searches
-            try:
-                self._vector_db.create_fts_index("text")
-            except Exception as e:
-                logging.error(f"Error creating FTS index: {str(e)}")
-        return self._vector_db
-
-    @property
-    def vector_model(self) -> SentenceTransformer:
-        """Get the sentence transformer model"""
-        if self._vector_model is None:
-            self._vector_model = SentenceTransformer(self._vector_model_name)
-        return self._vector_model
+        return self.VectorDB.vector_db
 
     def text_search(self, query: str, n_results: int = 10) -> pd.DataFrame:
         """Search the LanceDB for the query"""
-        return self.vector_db.search(query, query_type="fts").select(["id", "text"]).limit(n_results).to_pandas()
+        return self.VectorDB.text_search(query, n_results)
 
     def vector_search(self, query: str, n_results: int = 10) -> pd.DataFrame:
         """Search the LanceDB for the query"""
-        query_embedding = self.vector_model.encode([query])[0]
-        return self.vector_db.search(query_embedding).select(["id", "text"]).limit(n_results).to_pandas()
+        return self.VectorDB.vector_search(query, n_results)

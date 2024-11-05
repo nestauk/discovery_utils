@@ -90,3 +90,50 @@ def download_lancedb_embeddings(
 
         shutil.unpack_archive(local_key, str(_local_path))
         logging.info(f"Unzipped {local_key} to {_local_path}")
+
+
+class VectorDB:
+    """Class to handle the LanceDB connection and search"""
+
+    def __init__(self, db_path: Path, db_name: str, table_name: str, model: str) -> None:
+        """Initialise the VectorDB class
+
+        Args:
+            vector_db_path (Path): Path to the local LanceDB embeddings
+        """
+        self._vector_db_path = db_path
+        self._vector_db_name = db_name
+        self._vector_db_table_name = table_name
+        self._vector_model_name = model
+        self._vector_model = None
+        self._vector_db_connection = None
+        self._vector_db = None
+
+    @property
+    def vector_db(self) -> LanceDBConnection:
+        """Get the LanceDB connection"""
+        if self._vector_db is None:
+            self._vector_db_connection = load_lancedb_embeddings(self._vector_db_name, local_path=self._vector_db_path)
+            self._vector_db = self._vector_db_connection.open_table(self._vector_db_table_name)
+            # Enable full text searches
+            try:
+                self._vector_db.create_fts_index("text")
+            except Exception as e:
+                logging.error(f"Error creating FTS index: {str(e)}")
+        return self._vector_db
+
+    @property
+    def vector_model(self) -> SentenceTransformer:
+        """Get the sentence transformer model"""
+        if self._vector_model is None:
+            self._vector_model = SentenceTransformer(self._vector_model_name)
+        return self._vector_model
+
+    def text_search(self, query: str, n_results: int = 10) -> pd.DataFrame:
+        """Search the LanceDB for the query"""
+        return self.vector_db.search(query, query_type="fts").select(["id", "text"]).limit(n_results).to_pandas()
+
+    def vector_search(self, query: str, n_results: int = 10) -> pd.DataFrame:
+        """Search the LanceDB for the query"""
+        query_embedding = self.vector_model.encode([query])[0]
+        return self.vector_db.search(query_embedding).select(["id", "text"]).limit(n_results).to_pandas()

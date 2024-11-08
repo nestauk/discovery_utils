@@ -25,12 +25,12 @@ df2gspread = ">=1.0.4"
 python-dotenv = ">=1.0.1"
 nltk = ">=3.8.1"
 matplotlib = ">=3.8.4"
-sentence-transformers = ">=2.7.0"
+sentence-transformers = "^2.7.0"
 seaborn = ">=0.13.2"
-datasets = ">=2.19.0"
-evaluate = ">=0.4.2"
+evaluate = "^0.4.2"
 accelerate = ">=0.29.3"
-skypilot = ">=0.5.0"
+datasets = "^2.19.0"
+skypilot = "^0.6.1"
 openai = ">=1.35.9"
 langfuse = ">=2.38.1"
 llama-index = ">=0.10.65"
@@ -39,12 +39,15 @@ lxml = ">=5.3.0"
 huggingface-hub = "^0.25.1"
 lancedb = "^0.14.0"
 tantivy = "^0.22.0"
+torch = "2.4.1"
+transformers= "4.45.1"
 
 [tool.poetry.group.evals]
 optional = true
 
 [tool.poetry.group.evals.dependencies]
 ragas= ">=0.1.20"
+
 
 [tool.poetry.group.test]
 optional = true

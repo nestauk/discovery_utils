@@ -3,6 +3,7 @@ discovery_utils.getters.crunchbase.py
 
 Getters for Crunchbase data
 """
+
 import logging
 import os
 import re
@@ -297,6 +298,54 @@ class CrunchbaseGetter:
                 .sort_values(["group", "category"])
             )[["group", "category"]]
         return self._group_to_categories
+
+    def get_organisations_people(self, organisations_df: pd.DataFrame) -> pd.DataFrame:
+        """Get people associated with provided organisations"""
+        return (
+            organisations_df.merge(
+                self.people,
+                how="left",
+                left_on="id",
+                right_on="featured_job_organization_id",
+                suffixes=("", "_person"),
+            )
+            .merge(
+                self.people_descriptions[["id", "cb_url", "description"]],
+                how="left",
+                left_on="id_person",
+                right_on="id",
+                suffixes=("", "_person_description"),
+            )
+            .dropna(subset=["name_person"])
+        )[
+            [
+                "id",
+                "id_person",
+                "name",
+                "cb_url",
+                "name_person",
+                "first_name",
+                "last_name",
+                "gender",
+                "cb_url_person_description",
+                "linkedin_url_person",
+                "featured_job_title",
+                "description",
+            ]
+        ]
+
+    def get_aggregated_people(self, organisations_df: pd.DataFrame) -> pd.DataFrame:
+        """Aggregate people associated with provided organisations"""
+        org_people_df = self.get_organisations_people(organisations_df).assign(
+            job_company=lambda x: x["featured_job_title"].str.cat(x["name"], sep=" - ")
+        )
+
+        return org_people_df.groupby(["id_person", "name_person"]).agg(
+            n_companies=("id", "count"),
+            name=("name", list),
+            featured_job_title=("featured_job_title", list),
+            job_company=("job_company", list),
+        )
 
     @property
     def vector_db(self) -> embeddings.LanceDBConnection:

@@ -3,6 +3,7 @@ discovery_utils.getters.gtr.py
 
 Getters for Gateway to Research data
 """
+
 import datetime
 import logging
 import os
@@ -51,6 +52,9 @@ class GtrGetter:
         self._projects_persons = None
         self._projects_organisations = None
         self._persons_organisations = None
+        self._projects_organisation_names_list = None
+        self._person_affiliations = None
+        self._projects_persons_list = None
         self._default_text_fields = ["title", "abstractText", "techAbstractText", "potentialImpact"]
         # Vector DB
         self.VectorDB = embeddings.VectorDB(
@@ -121,6 +125,11 @@ class GtrGetter:
         return self._projects
 
     @property
+    def projects_enriched(self) -> pd.DataFrame:
+        """Get projects data enriched with funds information and urls"""
+        return self.projects_funds.merge(self.get_projects_urls(), on="id", how="left")
+
+    @property
     def organisations(self) -> pd.DataFrame:
         """Get organisations data"""
         if self._organisations is None:
@@ -150,17 +159,110 @@ class GtrGetter:
 
     @property
     def projects_persons(self) -> pd.DataFrame:
-        """Get projects data linked to persons"""
+        """Get projects data linked to persons
+
+        Returns a long table with one row per project-person pair,
+        including columns (besides other columns):
+            - id: project id
+            - title: project title
+            - persons_id: person id
+            - firstName: person first name
+            - surname: person surname
+        """
         if self._projects_persons is None:
             self._link_projects_to_persons_and_organisations()
         return self._projects_persons
 
     @property
+    def person_affiliations(self) -> pd.DataFrame:
+        """Get persons linked to organisations
+
+        Retruns a table with two columns:
+            - id: person id
+            - affiliations: list of organisation names
+        """
+        if self._person_affiliations is None:
+            self._person_affiliations = (
+                self.persons_organisations.dropna(subset=["name"])
+                .groupby("id")
+                .agg(affiliations=("name", list))
+                .reset_index()
+            )
+        return self._person_affiliations
+
+    @property
+    def projects_persons_list(self) -> pd.DataFrame:
+        """Get persons linked to organisations, where persons are grouped in a list
+
+        Returns a table with two columns:
+            - id: project id
+            - persons: comma-separated list of person names and their affiliations
+        """
+        if self._projects_persons_list is None:
+            self._projects_persons_list = (
+                self.projects_persons.drop_duplicates(["id", "persons_id"])
+                .assign(name=lambda df: df.firstName + " " + df.surname)
+                .merge(
+                    self.person_affiliations, how="left", left_on="persons_id", right_on="id", suffixes=("", "_person")
+                )
+                .dropna(subset=["affiliations"])
+                .assign(affiliations=lambda df: df.affiliations.apply(lambda x: ", ".join(x)))
+                .assign(name=lambda df: df.name + " (" + df.affiliations + ")")
+                .groupby("id")
+                .agg(persons=("name", list))
+                .reset_index()
+                .assign(persons=lambda df: df.persons.apply(lambda x: ", ".join(x)))
+            )
+        return self._projects_persons_list
+
+    def get_project_persons(self, project_ids: List[str] = None) -> pd.DataFrame:
+        """Get persons for a list of projects"""
+        if isinstance(project_ids, list):
+            return self.projects_persons_list.query("id in @project_ids")
+        else:
+            return self.projects_persons_list
+
+    @property
     def projects_organisations(self) -> pd.DataFrame:
-        """Get projects data linked to organisations"""
+        """Get projects data linked to organisations
+
+        Returns a long table with one row per project-organisation pair,
+        including columns (besides other columns):
+            - id: project id
+            - title: project title
+            - organisations_id: organisation id
+            - name: organisation name
+            - addresses: organisation addresses
+        """
         if self._projects_organisations is None:
             self._link_projects_to_persons_and_organisations()
         return self._projects_organisations
+
+    @property
+    def projects_organisation_names_list(self) -> pd.DataFrame:
+        """Get projects linked to organisations, where organisations are grouped in a list
+
+        Returns a table with two columns:
+            - id: project id
+            - organisations: comma-separated list of organisation names
+        """
+        if self._projects_organisation_names_list is None:
+            self._projects_organisation_names_list = (
+                self.projects_organisations.dropna(subset=["name"])
+                .drop_duplicates(["id", "organisations_id"])
+                .groupby("id")
+                .agg(organisations=("name", list))
+                .reset_index()
+                .assign(organisations=lambda df: df.organisations.apply(lambda x: ", ".join(x)))
+            )
+        return self._projects_organisation_names_list
+
+    def get_project_organisations(self, project_ids: List[str] = None) -> pd.DataFrame:
+        """Get organisations for a list of projects"""
+        if isinstance(project_ids, list):
+            return self.projects_organisation_names_list.query("id in @project_ids")
+        else:
+            return self.projects_organisation_names_list
 
     @property
     def persons_organisations(self) -> pd.DataFrame:
@@ -169,10 +271,66 @@ class GtrGetter:
             self._persons_organisations = self._link_persons_to_organisations()
         return self._persons_organisations
 
-    @property
-    def projects_enriched(self) -> pd.DataFrame:
-        """Get projects data enriched with funds information and urls"""
-        return self.projects_funds.merge(self.get_projects_urls(), on="id", how="left")
+    def get_project_stakeholders(self, projects_df: pd.DataFrame) -> pd.DataFrame:
+        """Get stakeholders (organisations, persons) for a project"""
+        return projects_df.merge(self.get_project_organisations(projects_df.id.tolist()), on="id", how="left").merge(
+            self.get_project_persons(projects_df.id.tolist()), on="id", how="left"
+        )
+
+    def get_aggregated_organisations(self, projects_df: pd.DataFrame) -> pd.DataFrame:
+        """Aggregate organisations for a selection of projects"""
+        return (
+            projects_df.merge(self.projects_organisations, how="left", on="id", suffixes=("", "_org"))
+            .drop_duplicates(["id", "organisations_id"])
+            .dropna(subset=["name"])
+            .groupby("organisations_id")
+            .agg(
+                n_projects=("id", "count"),
+                titles=("title", list),
+            )
+            .reset_index()
+            .sort_values("n_projects", ascending=False)
+            .merge(self.organisations, how="left", left_on="organisations_id", right_on="id")
+        )[["organisations_id", "name", "n_projects", "titles"]]
+
+    def get_aggregated_persons(self, projects_df: pd.DataFrame) -> pd.DataFrame:
+        """Aggregate persons for a selection of projects"""
+        return (
+            projects_df.merge(self.projects_persons, how="left", on="id", suffixes=("", "_org"))
+            .drop_duplicates(["id", "persons_id"])
+            .groupby("persons_id")
+            .agg(
+                n_projects=("id", "count"),
+                titles=("title", list),
+            )
+            .reset_index()
+            .sort_values("n_projects", ascending=False)
+            .merge(self.persons, how="left", left_on="persons_id", right_on="id", suffixes=("", "_person"))
+            .merge(
+                self.person_affiliations, how="left", left_on="persons_id", right_on="id", suffixes=("", "_persons")
+            )
+            .assign(person=lambda df: df.firstName + " " + df.surname)
+            .dropna(subset=["affiliations"])
+            .assign(affiliations=lambda df: df.affiliations.apply(lambda x: ", ".join(x)))
+        )[["persons_id", "person", "affiliations", "n_projects", "titles"]]
+
+    @staticmethod
+    def _get_links(links: Dict, endpoint: str, url_position: int = -2) -> pd.DataFrame:
+        """Link persons to their organisations
+
+        Args:
+            links (Dict): Links dictionary
+            endpoint (str): The endpoint for which to find links
+            url_position (int, optional): Position of the endpoint in the URL. Defaults to -2.
+        """
+        extracted_links = []
+        for link in links["link"]:
+            split_link = link["href"].split("/")
+            if split_link[url_position] == endpoint:
+                extracted_links.append(
+                    {f"{endpoint}_rel": link["rel"], f"{endpoint}_id": split_link[-1], "endpoint": split_link[-2]}
+                )
+        return extracted_links
 
     @staticmethod
     def _get_links_project_dates_and_funds(links: Dict) -> Dict:
@@ -232,24 +390,6 @@ class GtrGetter:
         )
         # Just in case, check that only one currency is used
         return projects_df.rename(columns={"value": "amount", "category": "funds_category"})
-
-    @staticmethod
-    def _get_links(links: Dict, endpoint: str, url_position: int = -2) -> pd.DataFrame:
-        """Link persons to their organisations
-
-        Args:
-            links (Dict): Links dictionary
-            endpoint (str): The endpoint for which to find links
-            url_position (int, optional): Position of the endpoint in the URL. Defaults to -2.
-        """
-        extracted_links = []
-        for link in links["link"]:
-            split_link = link["href"].split("/")
-            if split_link[url_position] == endpoint:
-                extracted_links.append(
-                    {f"{endpoint}_rel": link["rel"], f"{endpoint}_id": split_link[-1], "endpoint": split_link[-2]}
-                )
-        return extracted_links
 
     def _get_links_project_organisations_and_persons(self, links: Dict) -> List[Dict]:
         """Get the start and end dates for a project

@@ -53,7 +53,6 @@ class CrunchbaseGetter:
         self._events = None
         self._investors = None
         self._investments = None
-        self._investors = None
         self._ipos = None
         self._jobs = None
         self._people = None

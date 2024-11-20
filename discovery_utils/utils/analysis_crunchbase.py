@@ -1,7 +1,7 @@
 """
-discovery_utils.utils.analysis_cb
+discovery_utils.utils.analysis_crunchbase
 
-Analyses utils for Gateway to Research data
+Analyses utils for Crunchbase data
 """
 
 from typing import List
@@ -38,6 +38,7 @@ def orgs_founded_per_period(cb_orgs: pd.DataFrame, period: str, min_year: int, m
     check_valid(period, ["year", "month", "quarter"])
     period = period[0].capitalize()
     # Remove orgs that don't have year when they were founded
+    cb_orgs = cb_orgs.query("founded_on.notnull()").query("founded_on >= '1980-01-01'")
     cb_orgs = cb_orgs[-cb_orgs.founded_on.isnull()].copy().assign(time_period=lambda x: pd.to_datetime(x.founded_on))
     # Group by time period
     grouped = cb_orgs.groupby(cb_orgs["time_period"].dt.to_period(period)).agg(n_orgs_founded=("id", "count"))
@@ -68,6 +69,7 @@ def investments_per_period(funding_rounds_df: pd.DataFrame, period: str, min_yea
     check_valid(period, ["year", "month", "quarter"])
     period = period[0].capitalize()
     # Create time period column
+    funding_rounds_df = funding_rounds_df.query("announced_on.notnull()").query("announced_on >= '1980-01-01'")
     funding_rounds_df["time_period"] = pd.to_datetime(funding_rounds_df.announced_on)
     # Group by time period
     grouped = funding_rounds_df.groupby(funding_rounds_df["time_period"].dt.to_period(period)).agg(

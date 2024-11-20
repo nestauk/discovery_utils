@@ -9,8 +9,12 @@ import os
 import re
 
 from pathlib import Path
+from typing import List
+from typing import Literal
 
 import pandas as pd
+
+from numpy import dot
 
 from discovery_utils.utils import embeddings
 from discovery_utils.utils import s3
@@ -61,6 +65,9 @@ class CrunchbaseGetter:
         self._organisation_categories = None
         self._category_groups = None
         self._group_to_categories = None
+        self._embedding_model = None
+        self._category_vectors = None
+        self._group_vectors = None
         # Vector DB
         self.VectorDB = embeddings.VectorDB(
             db_path=vector_db_path,
@@ -255,6 +262,11 @@ class CrunchbaseGetter:
             self._degrees = self._get_cb_table("degrees")
         return self._degrees
 
+    @property
+    def unique_funding_round_types(self) -> List[str]:
+        """Get unique funding round types"""
+        return list(sorted(self.funding_rounds_enriched.investment_type.unique().tolist()))
+
     @staticmethod
     def _split_list(text_list: str, delimiter: str = ",") -> list:
         """Split a string into a list"""
@@ -344,6 +356,110 @@ class CrunchbaseGetter:
             name=("name", list),
             featured_job_title=("featured_job_title", list),
             job_company=("job_company", list),
+        )
+
+    def get_companies_in_categories(
+        self, categories: List[str], category_type: Literal["narrow", "broad"] = "narrow"
+    ) -> pd.DataFrame:
+        """Get all companies belonging to the provided categories
+
+        Note, this is equivalent to an OR operation on the categories.
+
+        Args:
+            categories (List[str]): List of categories to filter by
+            category_type (Literal["narrow", "broad"], optional): Type of category to filter by. Defaults to "narrow".
+                narrow = Crunchbase categories; broad = Crunchbase category groups.
+                Use self.category_groups to see the mapping between categories and groups.
+
+        Returns:
+            pd.DataFrame: Subset of self.organisations_enriched containing companies in the provided categories
+        """
+        _orgs_to_narrow_categories_df = self.organisation_categories.explode("category_list")
+        if category_type == "narrow":
+            matching_ids = set(
+                _orgs_to_narrow_categories_df.query("category_list in @categories").id.to_list()
+            )  # noqa
+        elif category_type == "broad":
+            matching_ids = set(  # noqa
+                _orgs_to_narrow_categories_df.merge(
+                    self.group_to_categories, left_on="category_list", right_on="category"
+                )
+                .query("group in @categories")
+                .id.to_list()
+            )
+        elif category_type not in ["narrow", "broad"]:
+            raise ValueError(f"category_type must be one of ['narrow', 'broad'], not {category_type}.")
+        return self.organisations_enriched.query("id in @matching_ids").drop_duplicates(subset="id")
+
+    def select_funding_rounds(
+        self,
+        org_ids: List[str] = None,
+        funding_round_types: List[str] = None,
+    ) -> pd.DataFrame:
+        """Select funding rounds for organisations
+
+        Args:
+            org_ids (List[str], optional): List of organisation IDs to filter by. Defaults to None.
+            funding_round_types (List[str], optional): List of funding round types to filter by. Defaults to None.
+        """
+        # Filter by organisation ids
+        if org_ids is not None:
+            funding_rounds_df = self.funding_rounds_enriched.query("org_id in @org_ids")
+        else:
+            funding_rounds_df = self.funding_rounds_enriched
+        # Filter by funding round types
+        if funding_round_types is not None:
+            funding_rounds_df = funding_rounds_df.query("investment_type in @funding_round_types")
+        return funding_rounds_df
+
+    @property
+    def embedding_model(self) -> embeddings.SentenceTransformer:
+        """Get the sentence transformer model"""
+        if self._embedding_model is None:
+            self._embedding_model = embeddings.SentenceTransformer("all-MiniLM-L6-v2")
+        return self._embedding_model
+
+    @property
+    def category_vectors(self) -> pd.DataFrame:
+        """Get the Crunchbase category vectors"""
+        if self._category_vectors is None:
+            unique_categories = self.group_to_categories.category.unique()
+            vectors = self.embedding_model.encode(unique_categories)
+            self._category_vectors = pd.DataFrame(data={"category": unique_categories, "vector": list(vectors)})
+        return self._category_vectors
+
+    @property
+    def group_vectors(self) -> pd.DataFrame:
+        """Get the Crunchbase group vectors"""
+        if self._group_vectors is None:
+            unique_groups = self.group_to_categories.group.unique()
+            vectors = self.embedding_model.encode(unique_groups)
+            self._group_vectors = pd.DataFrame(data={"group": unique_groups, "vector": list(vectors)})
+        return self._group_vectors
+
+    def find_similar_categories(
+        self, query: str, n_results: int = 10, category_type: Literal["narrow", "broad"] = "narrow"
+    ) -> pd.DataFrame:
+        """Find similar categories to the query
+
+        Args:
+            query (str): Query to find similar categories to
+            n_results (int, optional): Number of results to return. Defaults to 10.
+            category_type (Literal["narrow", "broad"], optional): Type of category to search for. Defaults to "narrow".
+        """
+        query_embedding = self.embedding_model.encode([query])[0]
+        if category_type == "narrow":
+            vectors_df = self.category_vectors
+        elif category_type == "broad":
+            vectors_df = self.group_vectors
+        elif category_type not in ["narrow", "broad"]:
+            raise ValueError(f"category_type must be one of ['narrow', 'broad'], not {category_type}.")
+        # calculate similarity
+        return (
+            vectors_df.assign(similarity=vectors_df.vector.apply(lambda x: dot(query_embedding, x)))
+            .sort_values("similarity", ascending=False)
+            .drop(columns="vector")
+            .head(n_results)
         )
 
     @property

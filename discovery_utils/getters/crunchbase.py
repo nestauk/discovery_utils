@@ -395,12 +395,14 @@ class CrunchbaseGetter:
         self,
         org_ids: List[str] = None,
         funding_round_types: List[str] = None,
+        deduplicate: bool = True,
     ) -> pd.DataFrame:
         """Select funding rounds for organisations
 
         Args:
             org_ids (List[str], optional): List of organisation IDs to filter by. Defaults to None.
             funding_round_types (List[str], optional): List of funding round types to filter by. Defaults to None.
+            deduplicate (bool, optional): Deduplicate funding rounds. If False, returns also all investors.
         """
         # Filter by organisation ids
         if org_ids is not None:
@@ -410,6 +412,9 @@ class CrunchbaseGetter:
         # Filter by funding round types
         if funding_round_types is not None:
             funding_rounds_df = funding_rounds_df.query("investment_type in @funding_round_types")
+        # Deduplicate funding rounds
+        if deduplicate:
+            funding_rounds_df = funding_rounds_df.drop_duplicates(subset=["funding_round_id"])
         return funding_rounds_df
 
     @property

@@ -82,6 +82,7 @@ def investments_per_period(funding_rounds_df: pd.DataFrame, period: str, min_yea
         impute_empty_periods(grouped.reset_index(), "time_period", period, min_year, max_year)
         .assign(year=lambda df: df.time_period.dt.year)
         # Convert to millions
+        .astype({"n_rounds": "int"})
         .assign(raised_amount_usd_total=lambda df: df.raised_amount_usd_total / 1e3)
         .assign(raised_amount_gbp_total=lambda df: df.raised_amount_gbp_total / 1e3)
     )

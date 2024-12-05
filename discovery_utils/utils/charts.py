@@ -195,7 +195,12 @@ def ts_smooth_incomplete(
     height: int = 150,
     max_complete_year: int = 2021,
 ) -> alt.Chart:
-    """Smoothed time series plot with incomplete years shown with dashed lines"""
+    """Smoothed time series plot with incomplete years shown with dashed lines.
+    
+    This is useful if we are halfway through the year, so we have some values but not values for the whole year.
+    
+    It is assumed that the dataframe `ts` contains values for all years, so you should specify with `max_complete_year` the latest year for which there is complete data. The function will still work `max_complete_year` is > the max year in the dataset, but you will just get a solid line.
+    """
     fig_solid = ts_smooth(
         ts=ts,
         variable=variable,

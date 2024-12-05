@@ -41,6 +41,7 @@ lancedb = "^0.14.0"
 tantivy = "^0.22.0"
 torch = "2.4.1"
 transformers= "4.45.1"
+altair = "^5.4.1"
 
 [tool.poetry.group.evals]
 optional = true

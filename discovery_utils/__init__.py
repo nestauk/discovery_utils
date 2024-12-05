@@ -16,3 +16,4 @@ S3_BUCKET = os.getenv("S3_BUCKET")
 
 # configger logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)

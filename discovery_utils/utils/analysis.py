@@ -55,7 +55,10 @@ def impute_empty_periods(
 
 def _moving_average(timeseries_df: pd.DataFrame, window: int = 3, replace_columns: bool = False) -> pd.DataFrame:
     """
-    Calculate rolling mean of yearly timeseries (not centered)
+    Calculate rolling mean of yearly timeseries
+
+    Note that this is not a centered moving average, so by default takes the current year
+    as the right edge of the window, and the previous n-1 years to calculate the average
 
     Args:
         timeseries_df: Should have a 'year' column and at least one other data column
@@ -79,10 +82,10 @@ def _moving_average(timeseries_df: pd.DataFrame, window: int = 3, replace_column
         return pd.concat([timeseries_df[["year"]], df_ma], axis=1)
 
 
-def process_time_period(ts_df: pd.DataFrame) -> pd.DataFrame:
-    """Process time_period column in a time series dataframe"""
-    if "time_period" in ts_df.columns:
-        return ts_df.assign(year=lambda df: df.time_period.dt.year).drop("time_period", axis=1)
+def process_time_period(ts_df: pd.DataFrame, time_period_column: str = "time_period") -> pd.DataFrame:
+    """Process time_period_column (that is in datetime format) in a time series dataframe"""
+    if time_period_column in ts_df.columns:
+        return ts_df.assign(year=lambda df: df[time_period_column].dt.year).drop(time_period_column, axis=1)
     else:
         return ts_df
 
@@ -90,6 +93,21 @@ def process_time_period(ts_df: pd.DataFrame) -> pd.DataFrame:
 def moving_average(ts_df: pd.DataFrame, window: int = 3) -> pd.DataFrame:
     """Calculate moving average for time series with a time_period column"""
     return ts_df.pipe(process_time_period).pipe(_moving_average, window=window, replace_columns=True)
+
+
+def magnitude(time_series: pd.DataFrame, year_start: int, year_end: int) -> pd.Series:
+    """Estimate the average magnitude of a time series within a specified year range.
+
+    Args:
+        time_series: A dataframe with a columns for 'year' and other data
+        year_start: First year of the trend window
+        year_end: Last year of the trend window
+
+    Returns:
+        Series with magnitude estimates for all data columns
+    """
+    magnitude = process_time_period(time_series).set_index("year").loc[year_start:year_end, :].mean()
+    return magnitude
 
 
 def magnitude_growth(ts_df: pd.DataFrame, year_start: int, year_end: int, window: int = 3) -> pd.DataFrame:
@@ -111,21 +129,6 @@ def magnitude_growth(ts_df: pd.DataFrame, year_start: int, year_end: int, window
         .to_frame("magnitude")
         .assign(growth=smoothed_growth(ts_df, year_start, year_end, window))
     )
-
-
-def magnitude(time_series: pd.DataFrame, year_start: int, year_end: int) -> pd.Series:
-    """Estimate the average magnitude of a time series within a specified year range.
-
-    Args:
-        time_series: A dataframe with a columns for 'year' and other data
-        year_start: First year of the trend window
-        year_end: Last year of the trend window
-
-    Returns:
-        Series with magnitude estimates for all data columns
-    """
-    magnitude = process_time_period(time_series).set_index("year").loc[year_start:year_end, :].mean()
-    return magnitude
 
 
 def percentage_change(initial_value: float, new_value: float) -> float:

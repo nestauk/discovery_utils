@@ -367,7 +367,7 @@ def crunchbase_dataframe(viz_df: pd.DataFrame, CB: CrunchbaseGetter) -> pd.DataF
         .rename(columns={"name": "title", "text": "description", "Name": "category"})
         .fillna({"total_funding_gbp": 0})
         .assign(total_funding_gbp=lambda df: df.total_funding_gbp.apply(lambda x: round(x / 1e3, 3)))
-        .assign(region=lambda x: x.country_code.apply(lambda y: country_to_region.get(y, "Rest of the World")))
+        .assign(region=lambda x: x.country_code.apply(lambda y: country_to_region().get(y, "Rest of the World")))
     )
 
 

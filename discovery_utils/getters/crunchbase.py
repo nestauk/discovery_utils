@@ -482,7 +482,7 @@ class CrunchbaseGetter:
         return self.VectorDB.vector_search(query, n_results)
 
 
-region_to_countries = {
+REGION_TO_COUNTRIES = {
     "North America + Australia": ["USA", "CAN", "AUS", "NZL"],
     "South + Central America": [
         "VEN",
@@ -618,7 +618,7 @@ region_to_countries = {
 }
 
 
-def get_country_to_region(region_to_countries: Dict[str]) -> Dict[str]:
+def get_country_to_region(region_to_countries: Dict[str, List[str]]) -> Dict[str, str]:
     """Transform the region-to-countries mapping back to countries-to-region."""
     original_mapping = {}
     for region, countries in region_to_countries.items():
@@ -627,7 +627,6 @@ def get_country_to_region(region_to_countries: Dict[str]) -> Dict[str]:
     return original_mapping
 
 
-@property
-def country_to_region() -> Dict[str]:
+def country_to_region() -> Dict[str, str]:
     """Get the mapping from countries to regions."""
-    return get_country_to_region(region_to_countries)
+    return get_country_to_region(REGION_TO_COUNTRIES)

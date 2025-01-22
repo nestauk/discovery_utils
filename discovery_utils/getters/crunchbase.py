@@ -9,6 +9,7 @@ import os
 import re
 
 from pathlib import Path
+from typing import Dict
 from typing import List
 from typing import Literal
 
@@ -479,3 +480,154 @@ class CrunchbaseGetter:
     def vector_search(self, query: str, n_results: int = 10) -> pd.DataFrame:
         """Search the LanceDB for the query"""
         return self.VectorDB.vector_search(query, n_results)
+
+
+region_to_countries = {
+    "North America + Australia": ["USA", "CAN", "AUS", "NZL"],
+    "South + Central America": [
+        "VEN",
+        "ARG",
+        "BRA",
+        "CHL",
+        "COL",
+        "PER",
+        "URY",
+        "PRY",
+        "ECU",
+        "BOL",
+        "GUY",
+        "SUR",
+        "MEX",
+        "CRI",
+        "SLV",
+        "GTM",
+        "HND",
+        "PAN",
+        "NIC",
+    ],
+    "Europe": [
+        "IRL",
+        "LUX",
+        "CHE",
+        "ESP",
+        "DEU",
+        "FRA",
+        "FIN",
+        "SWE",
+        "NLD",
+        "BEL",
+        "DNK",
+        "CZE",
+        "POL",
+        "EST",
+        "AUT",
+        "ITA",
+        "ROU",
+        "CYP",
+        "NOR",
+        "PRT",
+        "BGR",
+        "BLR",
+        "SVN",
+        "ARM",
+        "HUN",
+        "ISL",
+        "LVA",
+        "LTU",
+        "HRV",
+        "MKD",
+        "BIH",
+        "SRB",
+        "SVK",
+        "GEO",
+        "MDA",
+        "ALB",
+        "SMR",
+        "AND",
+        "GIB",
+        "FRO",
+        "LIE",
+        "IMN",
+        "GGY",
+        "JEY",
+        "ALA",
+    ],
+    "UK": ["GBR"],
+    "Asia": [
+        "IND",
+        "HKG",
+        "ISR",
+        "RUS",
+        "KOR",
+        "SGP",
+        "JPN",
+        "ARE",
+        "CHN",
+        "PHL",
+        "IDN",
+        "THA",
+        "TUR",
+        "MYS",
+        "TWN",
+        "PAK",
+        "LBN",
+        "ARM",
+        "BGD",
+        "KWT",
+        "VNM",
+        "MDV",
+        "JOR",
+        "LKA",
+        "IRN",
+        "SYR",
+        "KAZ",
+        "UZB",
+        "IRQ",
+        "OMN",
+        "PSE",
+        "TJK",
+        "BTN",
+        "TLS",
+        "MAC",
+        "MMR",
+        "MNG",
+        "KHM",
+        "LAO",
+        "BRN",
+    ],
+    "Africa": [
+        "ZAF",
+        "MUS",
+        "EGY",
+        "GHA",
+        "KEN",
+        "NGA",
+        "MAR",
+        "CIV",
+        "ETH",
+        "TUN",
+        "MOZ",
+        "UGA",
+        "SEN",
+        "ZWE",
+        "RWA",
+        "SDN",
+    ],
+    "Middle East": ["SAU", "ARE", "KWT", "QAT", "OMN", "IRQ", "IRN", "SYR", "JOR", "LBN", "ISR", "YEM"],
+    "Rest of the World": [None, "BMU", "TTO", "GLP", "CYM", "IMN"],
+}
+
+
+def get_country_to_region(region_to_countries: Dict[str]) -> Dict[str]:
+    """Transform the region-to-countries mapping back to countries-to-region."""
+    original_mapping = {}
+    for region, countries in region_to_countries.items():
+        for country in countries:
+            original_mapping[country] = region
+    return original_mapping
+
+
+@property
+def country_to_region() -> Dict[str]:
+    """Get the mapping from countries to regions."""
+    return get_country_to_region(region_to_countries)

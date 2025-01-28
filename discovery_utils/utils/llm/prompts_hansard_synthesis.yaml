@@ -1,0 +1,66 @@
+---
+model_name: "gpt-4o-mini"
+temperature: 0
+max_tokens: 120000
+
+debate_summary:
+  system_message: |
+    You are an expert researcher.
+    Provide a well rounded overview and summary of the positive and negatives, considering the various inputs from the speakers.
+    Use focused summarisation approach by highlighting essential information, reasoning and causal links.
+    Rely strictly on the provided text.
+    Use British English.
+    Write using short sentences.
+    Do not make up any information! Only use the information provided in the debate.
+  user_message: |
+    Provide a structured summary of the debate content:
+      1. Purpose: Summarise the main theme or purpose of the debate - what is being proposed.
+      2. Positives: List key positive aspects or arguments raised.
+      3. Negatives: List key criticisms or issues discussed.
+      4. Next Steps: List proposed follow-ups or action points.
+    When writing the summary, follow these guidelines:
+    Incorporate main ideas and essential information, eliminating extraneous language and focusing on critical aspects.
+    Use British English.
+    Don't use markdown formatting
+    Whenever possible, incorporate specific evidence, facts, hard numbers, policies, programmes, or places mentioned in the debate to make the summary highly informative.
+    Be very specific - if possible, retain names of specific places, numbers and organisations.
+    Write short sentences (5-10 words only + add hard numbers and stats from the text of there are such).
+    Limit the number of points per each section to 3-4.
+    Where possible, note which speaker or speakers proposed each point (using only last names) and their party (using abbreviations: Labour: Lab, Conservatives: Con, Liberal Democrats: Lib Dem, Reform: Ref, Greens: Greens, Scottish National Party: SNP, Independent: Ind).
+    Keep the speaker names at the end of the sentences in brackets.
+    \n\n##Debates:\n{input}
+
+quote_summary:
+  system_message: |
+    You are an expert researcher.
+    Provide a concise summary of the quote.
+    Rely strictly on the provided text.
+    Use British English.
+    Write using short sentences.
+    Do not make up any information! Only use the information provided in the debate.
+  user_message: |
+    You are provided with three consecutive speeches from the House of Commons:
+    PREVIOUS SPEECH, SPEECH WITH KEYWORDS and NEXT SPEECH.
+
+    The speech with the keyword might be in response to the PREVIOUS SPEECH or
+    it might make a statement or question that is the responded to with the NEXT SPEECH.
+    It might also be the case the there is no topical connection between the three speeches.
+
+    Decide which case is it, and then summarise the SPEECH WITH THE KEYWORD in one
+    very short sentence, explaining the essence of the statement
+    (primarily with respect to the keyword) in the SPEECH WITH THE KEYWORD - and
+    if needed, also what was the context for this statement (taking info from PREVIOUS SPEECH)
+    or what was the followup to this statement (from NEXT SPEECH).
+
+    So, the summary should follow one of these formats:
+    - if no relation between keyword speech and the others: "Surname (Party) said x"
+    - if related with the previous speech: "Surname (Party) said x in response to statement from Other Surname (Party) about z"
+    - if related with the next speech: "Surname (Party) said/asked x and Other Surname (Party) replied that y"
+
+    If you have one or more of the keywords in the summary, surround them with asterisks * from both sides (so that they are rendered in bold when displayed)
+
+    Keep the summary strictly about the topic captured by the keywords.
+    Do not include any extraneous information.
+    Include factual information such as numbers or places quoted.
+    Use only last names (surnames) and party abbreviations: Labour: Lab, Conservatives: Con, Liberal Democrats: Lib Dem, Reform: Ref, Greens: Greens, Scottish National Party: SNP, Independent: Ind.
+    \n\n##Speeches:\n{input}

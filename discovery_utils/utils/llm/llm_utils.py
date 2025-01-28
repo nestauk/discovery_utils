@@ -1,0 +1,103 @@
+import os
+import tiktoken
+from datetime import datetime
+
+from pydantic import BaseModel
+
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
+from langfuse.callback import CallbackHandler
+
+from discovery_utils import logging
+
+
+def get_langfuse_handler(session_id: str = None) -> CallbackHandler:
+    if session_id is None:
+        session_id=f"{datetime.today().isoformat()}"
+
+    return CallbackHandler(
+        user_id=os.environ.get("USER_EMAIL"),
+        session_id=session_id,
+        secret_key=os.environ.get("LANGFUSE_SECRET_KEY"),
+        public_key=os.environ.get("LANGFUSE_PUBLIC_KEY"),
+        host=os.environ.get("LANGFUSE_HOST"),
+    )
+
+
+def get_llm(model_name: str, temperature: float) -> ChatOpenAI:
+    """Get an LLM instance
+    
+    In the future, this function might accomodate different types of LLM providers
+    """
+    return ChatOpenAI(
+        openai_api_key=os.getenv("OPENAI_API_KEY"),
+        model_name=model_name,
+        temperature=temperature
+    )
+    
+
+def tokenize_text(text: str, model_name: str) -> int:
+    """Tokenize text and return the number of tokens."""
+    # Get tokenizer for the model
+    tokenizer = tiktoken.encoding_for_model(model_name)
+    tokens = tokenizer.encode(text)
+    # Return both token count and tokens
+    return len(tokens), tokens
+
+
+def decode_tokens(tokens: list, model_name: str) -> str:
+    """Decode tokens back into text using the specified model's tokenizer."""
+    tokenizer = tiktoken.encoding_for_model(model_name)
+    text = tokenizer.decode(tokens)
+    return text
+
+
+def check_token_length(input: str, model_name: str, max_tokens: int) -> bool:
+    """Check token length and return truncated input if necessary."""
+    n_tokens, tokens = tokenize_text(input, model_name)
+    if n_tokens > max_tokens:
+        logging.warning(f"Input text is too long ({n_tokens} tokens). Truncating to {max_tokens} tokens.")
+        input = decode_tokens(tokens[:max_tokens])
+    return input
+
+
+class StructuredOutputGenerator:
+    """Generate structured output from input text using a language model.
+    
+    Args:
+        model_dict: A dictionary containing the model configuration, with the following
+            keys: "model_name", "temperature", "max_tokens"
+        output_class: A Pydantic model class for the structured output
+        prompts: A dictionary containing the prompts for the structured output.
+            Should contain "system_message" and "user_message" keys.
+    """
+    def __init__(self, model_dict: dict, output_class: BaseModel, prompts: dict):
+        self.llm = get_llm(model_dict['model_name'], model_dict['temperature'])
+        self.model_name = model_dict['model_name']
+        self.temperature = model_dict['temperature']
+        self.max_tokens = model_dict['max_tokens']
+        self.langfuse_handler = get_langfuse_handler()
+        self.output_class = output_class
+        self.prompts = prompts
+
+    def generate(self, input_dict: dict) -> BaseModel:
+        """Generate structured output from input text.
+        
+        Args:
+            input_dict: A dictionary containing input data, should follow the format
+                {field_name: field_value}, with the field_name corresponding to the
+                placeholder in the prompt. Usually at least one of the fields should be "input"
+        """
+        # Initialise LLM
+        structured_llm = self.llm.with_structured_output(self.output_class)
+        # Prepare prompt
+        structured_prompt = ChatPromptTemplate.from_messages(
+            [("system", self.prompts["system_message"]), ("user", self.prompts["user_message"])]
+        )
+        # Check token length
+        _input_dict = input_dict.copy()
+        _input_dict["input"] = check_token_length(input_dict["input"], self.model_name, self.max_tokens)
+        structured_prompt = structured_prompt.format(**_input_dict)
+        # Get response from LLM
+        return structured_llm.invoke(structured_prompt, config={"callbacks": [self.langfuse_handler]})
+

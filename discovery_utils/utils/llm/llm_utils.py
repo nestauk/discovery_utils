@@ -1,19 +1,20 @@
 import os
-import tiktoken
+
 from datetime import datetime
 
-from pydantic import BaseModel
+import tiktoken
 
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_openai import ChatOpenAI
 from langfuse.callback import CallbackHandler
+from pydantic import BaseModel
 
 from discovery_utils import logging
 
 
 def get_langfuse_handler(session_id: str = None) -> CallbackHandler:
     if session_id is None:
-        session_id=f"{datetime.today().isoformat()}"
+        session_id = f"{datetime.today().isoformat()}"
 
     return CallbackHandler(
         user_id=os.environ.get("USER_EMAIL"),
@@ -26,15 +27,11 @@ def get_langfuse_handler(session_id: str = None) -> CallbackHandler:
 
 def get_llm(model_name: str, temperature: float) -> ChatOpenAI:
     """Get an LLM instance
-    
+
     In the future, this function might accomodate different types of LLM providers
     """
-    return ChatOpenAI(
-        openai_api_key=os.getenv("OPENAI_API_KEY"),
-        model_name=model_name,
-        temperature=temperature
-    )
-    
+    return ChatOpenAI(openai_api_key=os.getenv("OPENAI_API_KEY"), model_name=model_name, temperature=temperature)
+
 
 def tokenize_text(text: str, model_name: str) -> int:
     """Tokenize text and return the number of tokens."""
@@ -63,7 +60,7 @@ def check_token_length(input: str, model_name: str, max_tokens: int) -> bool:
 
 class StructuredOutputGenerator:
     """Generate structured output from input text using a language model.
-    
+
     Args:
         model_dict: A dictionary containing the model configuration, with the following
             keys: "model_name", "temperature", "max_tokens"
@@ -71,18 +68,19 @@ class StructuredOutputGenerator:
         prompts: A dictionary containing the prompts for the structured output.
             Should contain "system_message" and "user_message" keys.
     """
+
     def __init__(self, model_dict: dict, output_class: BaseModel, prompts: dict):
-        self.llm = get_llm(model_dict['model_name'], model_dict['temperature'])
-        self.model_name = model_dict['model_name']
-        self.temperature = model_dict['temperature']
-        self.max_tokens = model_dict['max_tokens']
+        self.llm = get_llm(model_dict["model_name"], model_dict["temperature"])
+        self.model_name = model_dict["model_name"]
+        self.temperature = model_dict["temperature"]
+        self.max_tokens = model_dict["max_tokens"]
         self.langfuse_handler = get_langfuse_handler()
         self.output_class = output_class
         self.prompts = prompts
 
     def generate(self, input_dict: dict) -> BaseModel:
         """Generate structured output from input text.
-        
+
         Args:
             input_dict: A dictionary containing input data, should follow the format
                 {field_name: field_value}, with the field_name corresponding to the
@@ -100,4 +98,3 @@ class StructuredOutputGenerator:
         structured_prompt = structured_prompt.format(**_input_dict)
         # Get response from LLM
         return structured_llm.invoke(structured_prompt, config={"callbacks": [self.langfuse_handler]})
-

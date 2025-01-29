@@ -1,7 +1,9 @@
 """Utility functions for input/output operations"""
 
-import yaml
 from typing import Dict
+
+import yaml
+
 
 def safe_yaml_load(yaml_str: str) -> Dict:
     """Safely load a YAML string"""

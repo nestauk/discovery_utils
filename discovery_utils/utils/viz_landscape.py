@@ -40,6 +40,8 @@ alt.data_transformers.disable_max_rows()
 LLM_MODEL = "gpt-4o-mini"
 MIN_CLUSTER_SIZE = 50
 
+N_KEYWORD_CLUSTERS = 35
+
 CUSTOM_STOPWORDS = ["httpswwwukriorgapplyforfundinghowwefundstudentships", "abstract", "gtr"]
 FULL_STOPWORDS = stopwords.words("english") + CUSTOM_STOPWORDS
 LEMMATIZER = WordNetLemmatizer()
@@ -213,7 +215,7 @@ def generate_bertopic(
 
 def generate_landscape_keywords(
     viz_df: pd.DataFrame,
-    n_keyword_clusters: int = 35,
+    n_keyword_clusters: int = N_KEYWORD_CLUSTERS,
     random_state: int = 10,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Generate keywords for the landscape"""
@@ -294,6 +296,7 @@ def generate_landscape_viz(
     nr_topics: int = 10,
     random_state: int = 42,
     verbose: bool = False,
+    n_keyword_clusters: int = N_KEYWORD_CLUSTERS,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Generate the landscape visualisation
 
@@ -315,7 +318,7 @@ def generate_landscape_viz(
     )
     reduced_embeddings = generate_reduced_embeddings(_vectors_df)
     viz_df = create_viz_dataframe(_vectors_df, reduced_embeddings, topic_model)
-    viz_df, centroids_df = generate_landscape_keywords(viz_df)
+    viz_df, centroids_df = generate_landscape_keywords(viz_df, n_keyword_clusters=n_keyword_clusters)
     return viz_df.drop(["vector", "Topic", "Representation"], axis=1), centroids_df
 
 
@@ -436,6 +439,7 @@ def generate_crunchbase_landscape(
     nr_topics: int = 10,
     random_state: int = 42,
     verbose: bool = False,
+    n_keyword_clusters: int = N_KEYWORD_CLUSTERS,
 ) -> Tuple[alt.Chart, pd.DataFrame]:
     """Generate the Crunchbase landscape visualisation"""
     viz_df, centroids_df = generate_landscape_viz(
@@ -444,6 +448,7 @@ def generate_crunchbase_landscape(
         nr_topics=nr_topics,
         random_state=random_state,
         verbose=verbose,
+        n_keyword_clusters=n_keyword_clusters,
     )
     cb_viz_df = crunchbase_dataframe(viz_df, CB)
     fig = scatter_keyword_chart(
@@ -522,6 +527,7 @@ def generate_gtr_landscape(
     nr_topics: int = 10,
     random_state: int = 42,
     verbose: bool = False,
+    n_keyword_clusters: int = N_KEYWORD_CLUSTERS,
 ) -> Tuple[alt.Chart, pd.DataFrame]:
     """Generate the Crunchbase landscape visualisation"""
     viz_df, centroids_df = generate_landscape_viz(
@@ -530,6 +536,7 @@ def generate_gtr_landscape(
         nr_topics=nr_topics,
         random_state=random_state,
         verbose=verbose,
+        n_keyword_clusters=n_keyword_clusters,
     )
     gtr_viz_df = gtr_dataframe(viz_df, GTR)
     fig = scatter_keyword_chart(

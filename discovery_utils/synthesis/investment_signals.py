@@ -16,8 +16,11 @@ import pandas as pd
 from slack_utils import SlackBlock
 from slack_utils import SlackElement
 from slack_utils import SlackMessage
+from slack_utils import calculate_duration_years
+from slack_utils import format_amount
 from slack_utils import format_currency
 from slack_utils import format_date
+from slack_utils import format_investment_type
 
 
 # Constants
@@ -197,16 +200,63 @@ class InvestmentSignalsMessage(SlackMessage):
             return [SlackElement(f"flag-{country_alpha2}").as_emoji(), SlackElement(" ").as_text()]
         return []
 
-    def _create_startup_section(self, startup: pd.Series) -> Dict:
-        """Create a rich text section for a startup."""
-        elements = self._create_country_flag(startup["country_alpha2"])
+    def _create_grant_section(self, grant: pd.Series) -> Dict:
+        """Create a rich text section for a grant."""
+        elements = self._create_country_flag(grant["country_alpha2"])
 
-        # Add startup name as link
-        elements.append(SlackElement(startup["name"]).bold().as_link(startup["cb_url"]))
+        # Format varies based on grant source
+        if grant["source"] == "crunchbase":
+            amount = format_amount(grant["raised_amount_gbp"] * 1000)
+            date_str = pd.to_datetime(grant["announced_on_date"]).strftime("%b %Y")
+            investor_name = "Unknown" if grant["investor_name"] == "Unknown" else grant["investor_name"]
+            funding_info = [
+                SlackElement("moneybag").as_emoji(),
+                SlackElement(f" {amount} • ").as_text(),
+                SlackElement("bank").as_emoji(),
+                SlackElement(f" {investor_name} • ").as_text(),
+                SlackElement("clock1").as_emoji(),
+                SlackElement(f" {date_str}").as_text(),
+            ]
+        else:
+            amount = format_amount(grant["raised_amount_gbp"])
+            duration = calculate_duration_years(grant["start"], grant["end"])
+            date_str = f"{pd.to_datetime(grant['start']).strftime('%b %Y')} - {pd.to_datetime(grant['end']).strftime('%b %Y')}"
+            funding_info = [
+                SlackElement("moneybag").as_emoji(),
+                SlackElement(f" {amount} • ").as_text(),
+                SlackElement("bank").as_emoji(),
+                SlackElement(f" {grant['leadFunder']} • ").as_text(),
+                SlackElement("clock1").as_emoji(),
+                SlackElement(f" {date_str} {duration}").as_text(),
+            ]
 
-        # Add description and topics
-        topic_text = f": {startup['short_description']} [{startup['topic_labels'].replace(',', ', ')}]"
-        elements.append(SlackElement(topic_text).as_text())
+        elements.extend(
+            [
+                # Title line
+                # TODO: Handle nan values in the slack element
+                SlackElement(grant["title"] if not pd.isna(grant["title"]) else " ").bold().as_text(),
+                SlackElement("\n").as_text(),
+                # Organisation line
+                SlackElement("round_pushpin").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement(grant["org_name"]).as_text(),
+                SlackElement("\n").as_text(),
+                # Funding info line
+                *funding_info,
+                SlackElement("\n").as_text(),
+                # Topics line
+                SlackElement("label").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement(grant["topic_labels"].replace(",", ", ")).as_text(),
+                SlackElement("\n").as_text(),
+                # Link line
+                SlackElement("link").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement("View project details").as_link(
+                    grant["cb_url"] if grant["source"] == "crunchbase" else grant["url"]
+                ),
+            ]
+        )
 
         return self.block_builder.create_rich_text_section(elements)
 
@@ -214,57 +264,37 @@ class InvestmentSignalsMessage(SlackMessage):
         """Create a rich text section for a funding round."""
         elements = self._create_country_flag(funding["country_alpha2"])
 
-        # Format the main text
-        amount = format_currency(funding["raised_amount_gbp"] * 1000)
+        # Format the amount and date
+        amount = format_amount(funding["raised_amount_gbp"] * 1000)
         date_str = pd.to_datetime(funding["announced_on_date"]).strftime("%b %d, %Y")
-        topics = funding["topic_labels"].replace(",", ", ")
 
-        main_text = f"{funding['org_name']} [{topics}] raised {amount} " f"on {date_str} ("
-        elements.append(SlackElement(main_text).as_text())
-
-        # Add link and description
         elements.extend(
             [
-                SlackElement("link").bold().as_link(funding["cb_url"]),
-                SlackElement(f"). {funding['short_description']}").as_text(),
+                # Company name line
+                SlackElement(funding["org_name"]).bold().as_text(),
+                SlackElement("\n").as_text(),
+                # Description line
+                SlackElement("information_source").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement(funding["short_description"]).as_text(),
+                SlackElement("\n").as_text(),
+                # Funding info line
+                SlackElement("moneybag").as_emoji(),
+                SlackElement(f" {amount} • ").as_text(),
+                SlackElement("calendar").as_emoji(),
+                SlackElement(f" {date_str} ").as_text(),
+                SlackElement("\n").as_text(),
+                # Topics line
+                SlackElement("label").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement(funding["topic_labels"].replace(",", ", ")).as_text(),
+                SlackElement("\n").as_text(),
+                # Link line
+                SlackElement("link").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement("View company details").as_link(funding["cb_url"]),
             ]
         )
-
-        return self.block_builder.create_rich_text_section(elements)
-
-    def _create_grant_section(self, grant: pd.Series) -> Dict:
-        """Create a rich text section for a grant."""
-        elements = self._create_country_flag(grant["country_alpha2"])
-        topics = grant["topic_labels"].replace(",", ", ")
-
-        if grant["source"] == "crunchbase":
-            amount = format_currency(grant["raised_amount_gbp"] * 1000)
-            date_str = pd.to_datetime(grant["announced_on_date"]).strftime("%b %d, %Y")
-            investor_text = "Unknown" if grant["investor_name"] == "Unknown" else f"by {grant['investor_name']}"
-
-            main_text = f"{grant['org_name']} [{topics}] was awarded {amount} " f"{investor_text} on {date_str} ("
-            elements.extend(
-                [
-                    SlackElement(main_text).as_text(),
-                    SlackElement("link").bold().as_link(grant["cb_url"]),
-                    SlackElement(f"). {grant['short_description']}").as_text(),
-                ]
-            )
-        else:
-            amount = format_currency(grant["raised_amount_gbp"])
-            main_text = (
-                f"[{topics}] Researchers at {grant['org_name']} were awarded "
-                f"{amount} by {grant['leadFunder']} for the project "
-                f"'{grant['title']}'. The project runs from {grant['start']} "
-                f"to {grant['end']} ("
-            )
-            elements.extend(
-                [
-                    SlackElement(main_text).as_text(),
-                    SlackElement("link").bold().as_link(grant["url"]),
-                    SlackElement(").").as_text(),
-                ]
-            )
 
         return self.block_builder.create_rich_text_section(elements)
 
@@ -272,20 +302,72 @@ class InvestmentSignalsMessage(SlackMessage):
         """Create a rich text section for a smart money investment."""
         elements = self._create_country_flag(investment["country_alpha2"])
 
-        topics = investment["topic_labels"].replace(",", ", ")
+        # Format the date
         date_str = pd.to_datetime(investment["announced_on_date"]).strftime("%b %d, %Y")
+        investment_type = format_investment_type(investment["investment_type"])
 
-        # Format main text
-        main_text = f"{investment['investor_name']} invested in "
-        elements.append(SlackElement(main_text).as_text())
-
-        # Add organisation info
-        org_text = f"{investment['org_name']} [{topics}] on {date_str} ("
         elements.extend(
             [
-                SlackElement(org_text).as_text(),
-                SlackElement(investment["investment_type"]).bold().as_link(investment["cb_url"]),
-                SlackElement(f"). {investment['short_description']}").as_text(),
+                # Company name line
+                SlackElement(investment["org_name"]).bold().as_text(),
+                SlackElement("\n").as_text(),
+                # Description line
+                SlackElement("information_source").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement(investment["short_description"]).as_text(),
+                SlackElement("\n").as_text(),
+                # Investment info line
+                SlackElement("moneybag").as_emoji(),
+                SlackElement(f" {investment_type} • ").as_text(),
+                SlackElement("bank").as_emoji(),
+                SlackElement(f" {investment['investor_name']} • ").as_text(),
+                SlackElement("calendar").as_emoji(),
+                SlackElement(f" {date_str}").as_text(),
+                SlackElement("\n").as_text(),
+                # Topics line
+                SlackElement("label").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement(investment["topic_labels"].replace(",", ", ")).as_text(),
+                SlackElement("\n").as_text(),
+                # Link line
+                SlackElement("link").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement("View investment details").as_link(investment["cb_url"]),
+            ]
+        )
+
+        return self.block_builder.create_rich_text_section(elements)
+
+    def _create_startup_section(self, startup: pd.Series) -> Dict:
+        """Create a rich text section for a startup."""
+        elements = self._create_country_flag(startup["country_alpha2"])
+
+        # Format the founding date
+        founded_date = pd.to_datetime(startup["founded_on"]).strftime("%b %Y")
+
+        elements.extend(
+            [
+                # Company name line
+                SlackElement(startup["name"]).bold().as_text(),
+                SlackElement("\n").as_text(),
+                # Description line
+                SlackElement("information_source").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement(startup["short_description"]).as_text(),
+                SlackElement("\n").as_text(),
+                # Founded date line
+                SlackElement("calendar").as_emoji(),
+                SlackElement(f" Founded {founded_date}").as_text(),
+                SlackElement("\n").as_text(),
+                # Topics line
+                SlackElement("label").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement(startup["topic_labels"].replace(",", ", ")).as_text(),
+                SlackElement("\n").as_text(),
+                # Link line
+                SlackElement("link").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement("View company details").as_link(startup["cb_url"]),
             ]
         )
 

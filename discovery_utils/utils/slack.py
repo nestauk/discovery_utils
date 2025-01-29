@@ -10,6 +10,8 @@ from typing import Optional
 from typing import TypedDict
 from typing import Union
 
+import pandas as pd
+
 from slack_sdk.webhook import WebhookClient
 
 
@@ -191,6 +193,33 @@ def format_date(date_obj: date, format_str: str = "%d-%m-%Y") -> str:
     return date_obj.strftime(format_str)
 
 
+def calculate_duration_years(start_date: str, end_date: str) -> str:
+    """Calculate project duration in years."""
+    if not start_date or not end_date:
+        return ""
+
+    start = pd.to_datetime(start_date)
+    end = pd.to_datetime(end_date)
+    years = (end - start).days / 365.25
+    return f"({round(years)} years)"
+
+
 def format_currency(amount: float, currency: str = "£", precision: int = 2) -> str:
     """Format a currency amount."""
     return f"{currency}{amount:,.2f}"
+
+
+def format_amount(amount: float) -> str:
+    """Format currency amount into K/M format."""
+    if amount >= 1_000_000:
+        return f"£{amount/1_000_000:.1f}M"
+    elif amount >= 1_000:
+        return f"£{amount/1_000:.0f}K"
+    else:
+        return f"£{amount:.0f}"
+
+
+def format_investment_type(investment_type: str) -> str:
+    """Format investment type to be more readable."""
+    # Convert snake_case to Title Case
+    return " ".join(word.capitalize() for word in investment_type.split("_"))

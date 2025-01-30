@@ -60,7 +60,10 @@ def _calculate_duration_years(start_date: str, end_date: str) -> str:
     start = pd.to_datetime(start_date)
     end = pd.to_datetime(end_date)
     years = (end - start).days / 365.25
-    return f"({round(years)} years)"
+    if years <= 1.5:
+        return f"({round(years)} year)"
+    else:
+        return f"({round(years)} years)"
 
 
 def _format_amount(amount: float) -> str:
@@ -285,7 +288,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement("View project details").as_link(
                     grant["cb_url"] if grant["source"] == "crunchbase" else grant["url"]
                 ),
-                SlackElement("\n").as_text(),
+                SlackElement("\n ").as_text(),
             ]
         )
 
@@ -324,7 +327,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement("link").as_emoji(),
                 SlackElement(" ").as_text(),
                 SlackElement("View company details").as_link(funding["cb_url"]),
-                SlackElement("\n").as_text(),
+                SlackElement("\n ").as_text(),
             ]
         )
 
@@ -365,7 +368,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement("link").as_emoji(),
                 SlackElement(" ").as_text(),
                 SlackElement("View investment details").as_link(investment["cb_url"]),
-                SlackElement("\n").as_text(),
+                SlackElement("\n ").as_text(),
             ]
         )
 
@@ -401,7 +404,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement("link").as_emoji(),
                 SlackElement(" ").as_text(),
                 SlackElement("View company details").as_link(startup["cb_url"]),
-                SlackElement("\n").as_text(),
+                SlackElement("\n ").as_text(),
             ]
         )
 
@@ -462,7 +465,7 @@ class InvestmentSignalsMessage(SlackMessage):
         self.add_content_section("New Startups", startups.to_dict("records"), "startup")
         self.add_content_section("New Funding Rounds", funding_rounds.to_dict("records"), "funding")
         self.add_content_section("New Commercial Grants", commercial_grants.to_dict("records"), "grant")
-        #
+        # Uncomment to add research grants
         # self.add_content_section(
         #    "New Research Grants",
         #    research_grants.to_dict('records'),

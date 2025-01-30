@@ -8,7 +8,6 @@ from datetime import date
 from typing import Dict
 from typing import List
 from typing import Literal
-from typing import Optional
 from typing import TypedDict
 
 import pandas as pd
@@ -16,11 +15,7 @@ import pandas as pd
 from slack_utils import SlackBlock
 from slack_utils import SlackElement
 from slack_utils import SlackMessage
-from slack_utils import calculate_duration_years
-from slack_utils import format_amount
-from slack_utils import format_currency
 from slack_utils import format_date
-from slack_utils import format_investment_type
 
 
 # Constants
@@ -55,6 +50,33 @@ class InvestmentData(TypedDict):
     funding_data: pd.DataFrame
     grants_data: pd.DataFrame
     smart_money_data: pd.DataFrame
+
+
+def _calculate_duration_years(start_date: str, end_date: str) -> str:
+    """Calculate project duration in years."""
+    if not start_date or not end_date:
+        return ""
+
+    start = pd.to_datetime(start_date)
+    end = pd.to_datetime(end_date)
+    years = (end - start).days / 365.25
+    return f"({round(years)} years)"
+
+
+def _format_amount(amount: float) -> str:
+    """Format currency amount into K/M format."""
+    if amount >= 1_000_000:
+        return f"£{amount/1_000_000:.1f}M"
+    elif amount >= 1_000:
+        return f"£{amount/1_000:.0f}K"
+    else:
+        return f"£{amount:.0f}"
+
+
+def _format_investment_type(investment_type: str) -> str:
+    """Format investment type to be more readable."""
+    # Convert snake_case to Title Case
+    return " ".join(word.capitalize() for word in investment_type.split("_"))
 
 
 # Data filtering functions
@@ -113,12 +135,15 @@ def filter_funding_rounds(df: pd.DataFrame, mission: str, limit: int = DEFAULT_L
     )
 
 
-def filter_grants(df: pd.DataFrame, mission: str, limit: int = DEFAULT_LIMIT) -> pd.DataFrame:
-    """Filter grants based on mission and source-specific criteria.
+def filter_grants_by_type(
+    df: pd.DataFrame, mission: str, grant_type: Literal["research", "commercial"], limit: int = DEFAULT_LIMIT
+) -> pd.DataFrame:
+    """Filter grants based on mission, source-specific criteria, and grant type.
 
     Args:
         df: DataFrame containing grant data
         mission: Mission identifier to filter by
+        grant_type: Type of grant ("research" or "commercial")
         limit: Maximum number of records to return
 
     Returns:
@@ -128,6 +153,12 @@ def filter_grants(df: pd.DataFrame, mission: str, limit: int = DEFAULT_LIMIT) ->
         return df
 
     filtered = df.query("mission_labels.str.contains(@mission)")
+
+    # Apply type-specific filters
+    if grant_type == "commercial":
+        filtered = filtered.query("leadFunder == 'Innovate UK'")
+    else:  # research
+        filtered = filtered.query("leadFunder != 'Innovate UK'")
 
     # Apply additional filters for crunchbase grants
     if filtered["source"].all() == "crunchbase":
@@ -206,7 +237,7 @@ class InvestmentSignalsMessage(SlackMessage):
 
         # Format varies based on grant source
         if grant["source"] == "crunchbase":
-            amount = format_amount(grant["raised_amount_gbp"] * 1000)
+            amount = _format_amount(grant["raised_amount_gbp"] * 1000)
             date_str = pd.to_datetime(grant["announced_on_date"]).strftime("%b %Y")
             investor_name = "Unknown" if grant["investor_name"] == "Unknown" else grant["investor_name"]
             funding_info = [
@@ -218,8 +249,8 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement(f" {date_str}").as_text(),
             ]
         else:
-            amount = format_amount(grant["raised_amount_gbp"])
-            duration = calculate_duration_years(grant["start"], grant["end"])
+            amount = _format_amount(grant["raised_amount_gbp"])
+            duration = _calculate_duration_years(grant["start"], grant["end"])
             date_str = f"{pd.to_datetime(grant['start']).strftime('%b %Y')} - {pd.to_datetime(grant['end']).strftime('%b %Y')}"
             funding_info = [
                 SlackElement("moneybag").as_emoji(),
@@ -233,8 +264,7 @@ class InvestmentSignalsMessage(SlackMessage):
         elements.extend(
             [
                 # Title line
-                # TODO: Handle nan values in the slack element
-                SlackElement(grant["title"] if not pd.isna(grant["title"]) else " ").bold().as_text(),
+                SlackElement(grant["title"]).bold().as_text(),
                 SlackElement("\n").as_text(),
                 # Organisation line
                 SlackElement("round_pushpin").as_emoji(),
@@ -255,6 +285,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement("View project details").as_link(
                     grant["cb_url"] if grant["source"] == "crunchbase" else grant["url"]
                 ),
+                SlackElement("\n").as_text(),
             ]
         )
 
@@ -265,7 +296,7 @@ class InvestmentSignalsMessage(SlackMessage):
         elements = self._create_country_flag(funding["country_alpha2"])
 
         # Format the amount and date
-        amount = format_amount(funding["raised_amount_gbp"] * 1000)
+        amount = _format_amount(funding["raised_amount_gbp"] * 1000)
         date_str = pd.to_datetime(funding["announced_on_date"]).strftime("%b %d, %Y")
 
         elements.extend(
@@ -293,6 +324,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement("link").as_emoji(),
                 SlackElement(" ").as_text(),
                 SlackElement("View company details").as_link(funding["cb_url"]),
+                SlackElement("\n").as_text(),
             ]
         )
 
@@ -304,7 +336,7 @@ class InvestmentSignalsMessage(SlackMessage):
 
         # Format the date
         date_str = pd.to_datetime(investment["announced_on_date"]).strftime("%b %d, %Y")
-        investment_type = format_investment_type(investment["investment_type"])
+        investment_type = _format_investment_type(investment["investment_type"])
 
         elements.extend(
             [
@@ -333,6 +365,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement("link").as_emoji(),
                 SlackElement(" ").as_text(),
                 SlackElement("View investment details").as_link(investment["cb_url"]),
+                SlackElement("\n").as_text(),
             ]
         )
 
@@ -368,6 +401,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement("link").as_emoji(),
                 SlackElement(" ").as_text(),
                 SlackElement("View company details").as_link(startup["cb_url"]),
+                SlackElement("\n").as_text(),
             ]
         )
 
@@ -420,12 +454,20 @@ class InvestmentSignalsMessage(SlackMessage):
         # Filter data using dedicated filtering functions
         startups = filter_startups(org_data, mission, limit)
         funding_rounds = filter_funding_rounds(funding_data, mission, limit)
-        grants = filter_grants(grants_data, mission, limit)
+        # Split grants into research and commercial
+        research_grants = filter_grants_by_type(grants_data, mission, "research", limit)
+        commercial_grants = filter_grants_by_type(grants_data, mission, "commercial", limit)
 
         # Add each section
         self.add_content_section("New Startups", startups.to_dict("records"), "startup")
         self.add_content_section("New Funding Rounds", funding_rounds.to_dict("records"), "funding")
-        self.add_content_section("New Grants", grants.to_dict("records"), "grant")
+        self.add_content_section("New Commercial Grants", commercial_grants.to_dict("records"), "grant")
+        #
+        # self.add_content_section(
+        #    "New Research Grants",
+        #    research_grants.to_dict('records'),
+        #    "grant"
+        # )
 
         return self
 

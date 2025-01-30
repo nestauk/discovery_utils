@@ -3,10 +3,10 @@
 """Utilities for building Slack messages with proper block formatting."""
 
 from datetime import date
+from typing import Any
 from typing import Dict
 from typing import List
 from typing import Literal
-from typing import Optional
 from typing import TypedDict
 from typing import Union
 
@@ -61,12 +61,39 @@ class SectionBlock(SlackBlock):
     text: Dict[str, str]
 
 
+def clean_text(value: Any) -> str:
+    """Clean and format text values for Slack elements.
+
+    Args:
+        value: Any value that needs to be converted to text
+
+    Returns:
+        Cleaned string value, with empty/null values converted to empty string
+    """
+    # Handle various types of empty/null values
+    if pd.isna(value):
+        return " "
+    if value is None:
+        return " "
+    if isinstance(value, (list, dict)) and not value:
+        return " "
+    if isinstance(value, (int, float)):
+        # Convert numbers to string, handling special float values
+        if pd.isna(value):
+            return " "
+        return str(value)
+    if isinstance(value, bool):
+        return str(value)
+
+    return str(value)
+
+
 # Element Builder
 class SlackElement:
     """Builder for Slack message elements."""
 
-    def __init__(self, text: str = ""):
-        self.text = text
+    def __init__(self, text: Any = ""):
+        self.text = clean_text(text)
         self._style: Dict[str, bool] = {}
 
     def bold(self) -> "SlackElement":
@@ -81,6 +108,10 @@ class SlackElement:
 
     def as_text(self) -> RichTextElement:
         """Build a text element."""
+        # Only include non-empty text elements
+        if not self.text:
+            return {"type": "text", "text": " "}
+
         element: RichTextElement = {"type": "text", "text": self.text}
         if self._style:
             element["style"] = self._style
@@ -88,7 +119,16 @@ class SlackElement:
 
     def as_link(self, url: str) -> RichTextElement:
         """Build a link element."""
-        element: RichTextElement = {"type": "link", "text": self.text, "url": url}
+        # Clean the URL
+        cleaned_url = clean_text(url)
+        if not cleaned_url:
+            return {"type": "text", "text": " "}
+
+        element: RichTextElement = {
+            "type": "link",
+            "text": self.text or "View details",  # Fallback text if none provided
+            "url": cleaned_url,
+        }
         if self._style:
             element["style"] = self._style
         return element
@@ -187,39 +227,6 @@ class SlackMessage:
         return self.blocks
 
 
-# Formatting utilities
 def format_date(date_obj: date, format_str: str = "%d-%m-%Y") -> str:
     """Format a date object to string."""
     return date_obj.strftime(format_str)
-
-
-def calculate_duration_years(start_date: str, end_date: str) -> str:
-    """Calculate project duration in years."""
-    if not start_date or not end_date:
-        return ""
-
-    start = pd.to_datetime(start_date)
-    end = pd.to_datetime(end_date)
-    years = (end - start).days / 365.25
-    return f"({round(years)} years)"
-
-
-def format_currency(amount: float, currency: str = "£", precision: int = 2) -> str:
-    """Format a currency amount."""
-    return f"{currency}{amount:,.2f}"
-
-
-def format_amount(amount: float) -> str:
-    """Format currency amount into K/M format."""
-    if amount >= 1_000_000:
-        return f"£{amount/1_000_000:.1f}M"
-    elif amount >= 1_000:
-        return f"£{amount/1_000:.0f}K"
-    else:
-        return f"£{amount:.0f}"
-
-
-def format_investment_type(investment_type: str) -> str:
-    """Format investment type to be more readable."""
-    # Convert snake_case to Title Case
-    return " ".join(word.capitalize() for word in investment_type.split("_"))

@@ -10,8 +10,8 @@ from discovery_utils import logging
 from discovery_utils.getters import hansard
 from discovery_utils.synthesis.policy import llm
 from discovery_utils.synthesis.policy import slack
-from discovery_utils.utils import get_keyword_hits
-from discovery_utils.utils import keywords
+from discovery_utils.utils.keywords import get_keyword_hits
+from discovery_utils.utils.keywords import get_keywords
 from discovery_utils.utils.llm.mission_check import classify_relevance
 
 
@@ -375,7 +375,7 @@ def _create_mission_update_blocks(
         speeches_df: The DataFrame with weekly speeches and mission labels
     """
     # Fetch mission keywords from the keywords Google Sheet
-    keywords_dict = keywords.get_keywords(mission)
+    keywords_dict = get_keywords(mission)
 
     # Select only debates related to one of the missions, and do a robust keyword check
     mission_debates_df = _check_robust_keywords(speeches_df, keywords_dict)
@@ -428,6 +428,7 @@ def _collate_data_signals(
 
 def create_policy_update_message(
     Hansard: HansardData = None,
+    missions: list[str] = MISSIONS,
     message_date: str = None,
     data_start_date: str = None,
     data_end_date: str = None,
@@ -459,10 +460,10 @@ def create_policy_update_message(
 
     mission_blocks = []
     data_signals = []
-    for mission in MISSIONS:
+    for mission in missions:
         # Create mission data signals
         debate_dicts, quote_dicts = _create_mission_update_blocks(mission, speeches_df)
         data_signals.append(_collate_data_signals(mission, debate_dicts, quote_dicts))
         mission_blocks.append(_collate_mission_slack_block(mission, debate_dicts, quote_dicts))
 
-    return _combine_and_chunk_slack_blocks(mission_blocks)
+    return _combine_and_chunk_slack_blocks(mission_blocks, message_date, data_start_date, data_end_date)

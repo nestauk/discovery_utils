@@ -10,7 +10,7 @@ from discovery_utils.utils.io import safe_yaml_load
 from discovery_utils.utils.llm.llm_utils import StructuredOutputGenerator
 
 
-CONFIG_PATH = files("discovery_utils.utils.llm").joinpath("prompts_hansard_synthesis.yaml")
+CONFIG_PATH = files("discovery_utils.synthesis.policy").joinpath("prompts_hansard_synthesis.yaml")
 CONFIG = safe_yaml_load(open(CONFIG_PATH).read())
 
 
@@ -51,11 +51,7 @@ SummaryGenerator = StructuredOutputGenerator(
 
 def summarise_debate_with_structure(debate: Debate) -> StructuredSummaryOutput:
     """Summarise a debate with structured output"""
-    return SummaryGenerator.generate(
-        input=debate.content,
-        output_class=StructuredSummaryOutput,
-        messages_config=CONFIG["debate_summary"],
-    )
+    return SummaryGenerator.generate({"input": debate.content})
 
 
 QuoteGenerator = StructuredOutputGenerator(
@@ -68,8 +64,4 @@ QuoteGenerator = StructuredOutputGenerator(
 def summarise_quote(text: str) -> QuoteSummaryOutput:
     """Summarise a quote with structured output"""
 
-    return QuoteGenerator.generate(
-        input=text,
-        output_class=QuoteSummaryOutput,
-        messages_config=CONFIG["quote_summary"],
-    )
+    return QuoteGenerator.generate({"input": text})

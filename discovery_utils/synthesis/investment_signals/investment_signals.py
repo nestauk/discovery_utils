@@ -15,6 +15,7 @@ from typing import TypedDict
 
 import pandas as pd
 
+from discovery_utils.utils.llm.gtr_synthesis import summarise_abstract
 from discovery_utils.utils.llm.mission_check import classify_relevance
 from discovery_utils.utils.slack import SlackBlock
 from discovery_utils.utils.slack import SlackElement
@@ -298,7 +299,7 @@ def _create_company_header(name: str, description: str, url: str) -> List[Dict]:
                 SlackElement(" ").as_text(),
                 # Add "is" if description doesn't start with common conjunctions/articles
                 SlackElement(
-                    "is " + formatted_desc
+                    "is a " + formatted_desc
                     if not re.match(
                         r"^(is|are|a|an|the|has|have|builds?|develops?|offers?|provides?|strives?)",
                         formatted_desc.lower(),
@@ -349,6 +350,8 @@ class InvestmentSignalsMessage(SlackMessage):
 
         # Format varies based on grant source
         if grant["source"] == "crunchbase":
+            display_title = grant["title"]
+            display_abstract = grant["short_description"]
             amount = _format_amount(grant["raised_amount_gbp"] * 1000)
             date_str = pd.to_datetime(grant["announced_on_date"]).strftime("%b %Y")
             investor_name = "Unknown" if grant["investor_name"] == "Unknown" else grant["investor_name"]
@@ -361,6 +364,19 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement(f" {date_str}").as_text(),
             ]
         else:
+            try:
+                summary = summarise_abstract(text=grant["abstractText"], title=grant["title"])
+                display_title = summary.title
+                display_abstract = summary.summary
+            except Exception as e:
+                logging.warning(f"Error getting summary: {e}")
+                display_title = grant["title"]
+                display_abstract = (
+                    grant["abstractText"][:250] + "..."
+                    if len(grant.get("abstractText", "")) > 250
+                    else grant.get("abstractText", "")
+                )
+
             amount = _format_amount(grant["raised_amount_gbp"])
             duration = _calculate_duration_years(grant["start"], grant["end"])
             date_str = f"{pd.to_datetime(grant['start']).strftime('%b %Y')} - {pd.to_datetime(grant['end']).strftime('%b %Y')}"
@@ -376,7 +392,7 @@ class InvestmentSignalsMessage(SlackMessage):
         elements.extend(
             [
                 # Title line
-                SlackElement(grant["title"])
+                SlackElement(display_title)
                 .bold()
                 .as_link(grant["cb_url"] if grant["source"] == "crunchbase" else grant["url"]),
                 SlackElement("\n").as_text(),
@@ -388,10 +404,16 @@ class InvestmentSignalsMessage(SlackMessage):
                 # Funding info line
                 *funding_info,
                 SlackElement("\n").as_text(),
+                # Abstract line
+                SlackElement("memo").as_emoji(),
+                SlackElement(" ").as_text(),
+                SlackElement(display_abstract).as_text(),
+                SlackElement("\n").as_text(),
                 # Topics line
                 SlackElement("label").as_emoji(),
                 SlackElement(" ").as_text(),
                 SlackElement(grant["topic_labels"].replace(",", ", ")).as_text(),
+                SlackElement("\n").as_text(),
                 SlackElement("\n").as_text(),
             ]
         )
@@ -420,6 +442,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement("label").as_emoji(),
                 SlackElement(" ").as_text(),
                 SlackElement(funding["topic_labels"].replace(",", ", ")).as_text(),
+                SlackElement("\n").as_text(),
                 SlackElement("\n").as_text(),
             ]
         )
@@ -452,6 +475,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement(" ").as_text(),
                 SlackElement(investment["topic_labels"].replace(",", ", ")).as_text(),
                 SlackElement("\n").as_text(),
+                SlackElement("\n").as_text(),
             ]
         )
 
@@ -477,6 +501,7 @@ class InvestmentSignalsMessage(SlackMessage):
                 SlackElement("label").as_emoji(),
                 SlackElement(" ").as_text(),
                 SlackElement(startup["topic_labels"].replace(",", ", ")).as_text(),
+                SlackElement("\n").as_text(),
                 SlackElement("\n").as_text(),
             ]
         )
@@ -585,13 +610,32 @@ class ResearchGrantsMessage(SlackMessage):
         elements = []
 
         if grant["source"] == "GtR":
+            # Get summarised title and abstract
+            try:
+                summary = summarise_abstract(text=grant["abstractText"], title=grant["title"])
+                display_title = summary.title
+                display_abstract = summary.summary
+            except Exception as e:
+                logging.warning(f"Error getting summary: {e}")
+                display_title = grant["title"]
+                display_abstract = (
+                    grant["abstractText"][:500] + "..."
+                    if len(grant.get("abstractText", "")) > 500
+                    else grant.get("abstractText", "")
+                )
+
             # Add organisation names
             org_names = grant["org_name"].split(" & ") if isinstance(grant["org_name"], str) else []
 
             elements.extend(
                 [
                     # Title line
-                    SlackElement(grant["title"] if not pd.isna(grant["title"]) else "").bold().as_text(),
+                    SlackElement(display_title).bold().as_link(grant["url"]),
+                    SlackElement("\n").as_text(),
+                    # Abstract line
+                    SlackElement("memo").as_emoji(),
+                    SlackElement(" ").as_text(),
+                    SlackElement(display_abstract).as_text(),
                     SlackElement("\n").as_text(),
                     # Organisations line
                     SlackElement("round_pushpin").as_emoji(),
@@ -609,15 +653,6 @@ class ResearchGrantsMessage(SlackMessage):
                     ).as_text(),
                     SlackElement(_calculate_duration_years(grant["start"], grant["end"])).as_text(),
                     SlackElement("\n").as_text(),
-                    # Abstract line
-                    SlackElement("memo").as_emoji(),
-                    SlackElement(" ").as_text(),
-                    SlackElement(
-                        grant["short_description"][:500] + "..."
-                        if len(grant.get("short_description", "")) > 500
-                        else grant.get("short_description", "")
-                    ).as_text(),
-                    SlackElement("\n").as_text(),
                     # Topics line
                     SlackElement("label").as_emoji(),
                     SlackElement(" ").as_text(),
@@ -625,10 +660,6 @@ class ResearchGrantsMessage(SlackMessage):
                         grant["topic_labels"].replace(",", ", ") if not pd.isna(grant["topic_labels"]) else ""
                     ).as_text(),
                     SlackElement("\n").as_text(),
-                    # Link line
-                    SlackElement("link").as_emoji(),
-                    SlackElement(" ").as_text(),
-                    SlackElement("View project details").as_link(grant["url"]),
                     SlackElement("\n").as_text(),
                 ]
             )

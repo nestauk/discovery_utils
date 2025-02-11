@@ -118,7 +118,7 @@ def concat_grants(gtr_df_filtered, crunchbase_grants):
         columns={
             "name_string": "org_name",
             "amount": "raised_amount_gbp",
-            "abstractText": "short_description",
+            # "abstractText": "short_description",
         }
     )
 

@@ -69,6 +69,10 @@ class CrunchbaseGetter:
         self._embedding_model = None
         self._category_vectors = None
         self._group_vectors = None
+        self._latest_grants = None
+        self._latest_funding_rounds = None
+        self._latest_startups = None
+        self._latest_smart_money_investors = None
         # Vector DB
         self.VectorDB = embeddings.VectorDB(
             db_path=vector_db_path,
@@ -142,6 +146,26 @@ class CrunchbaseGetter:
     def _get_enriched_funding_rounds(self) -> pd.DataFrame:
         """Get enriched funding rounds data"""
         key = f"{S3_PREFIX}enriched/funding_rounds_full.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_grants(self) -> pd.DataFrame:
+        """Get the latest Crunchbase grants data"""
+        key = f"{S3_PREFIX}enriched/grants_new_only.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_funding_rounds(self) -> pd.DataFrame:
+        """Get the latest Crunchbase funding rounds data"""
+        key = f"{S3_PREFIX}enriched/funding_rounds_for_slack.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_startups(self) -> pd.DataFrame:
+        """Get the latest Crunchbase startups data"""
+        key = f"{S3_PREFIX}enriched/orgs_for_slack.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_smart_money_investors(self) -> pd.DataFrame:
+        """Get the latest Crunchbase smart money investors data"""
+        key = f"{S3_PREFIX}enriched/smart_money_for_slack.parquet"
         return self._get_table(key)
 
     @property
@@ -262,6 +286,34 @@ class CrunchbaseGetter:
         if self._degrees is None:
             self._degrees = self._get_cb_table("degrees")
         return self._degrees
+
+    @property
+    def latest_grants(self) -> pd.DataFrame:
+        """Get the latest Crunchbase grants data"""
+        if self._latest_grants is None:
+            self._latest_grants = self._get_enriched_latest_grants()
+        return self._latest_grants
+
+    @property
+    def latest_funding_rounds(self) -> pd.DataFrame:
+        """Get the latest Crunchbase funding rounds data"""
+        if self._latest_funding_rounds is None:
+            self._latest_funding_rounds = self._get_enriched_latest_funding_rounds()
+        return self._latest_funding_rounds
+
+    @property
+    def latest_startups(self) -> pd.DataFrame:
+        """Get the latest Crunchbase startups data"""
+        if self._latest_startups is None:
+            self._latest_startups = self._get_enriched_latest_startups()
+        return self._latest_startups
+
+    @property
+    def latest_smart_money_investors(self) -> pd.DataFrame:
+        """Get the latest Crunchbase smart money investors data"""
+        if self._latest_smart_money_investors is None:
+            self._latest_smart_money_investors = self._get_enriched_latest_smart_money_investors()
+        return self._latest_smart_money_investors
 
     @property
     def unique_funding_round_types(self) -> List[str]:

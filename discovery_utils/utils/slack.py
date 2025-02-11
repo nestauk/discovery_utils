@@ -1,6 +1,6 @@
+"""Utilities for building Slack messages with block formatting."""
 
-
-"""Utilities for building Slack messages with proper block formatting."""
+import os
 
 from datetime import date
 from typing import Any
@@ -15,7 +15,7 @@ import pandas as pd
 from slack_sdk.webhook import WebhookClient
 
 
-slack_webhook = WebhookClient(os.environ["SLACK_WEBHOOK_URL_TESTING"])
+WEBHOOKCLIENT = WebhookClient(os.environ["SLACK_WEBHOOK_URL_TESTING"])
 
 # Type Definitions
 class SlackBlock(TypedDict):

@@ -1,3 +1,28 @@
+"""
+Create and send a policy update message to the Slack channel
+
+This script fetches Hansard data from S3, verifies and summarises it using LLM, and sends the results to Slack.
+
+Usage:
+    python policy_update.py
+
+Alternatively, you can import the functions and use them in your own script.
+    from discovery_utils.synthesis.policy import policy_update
+    from slack_sdk.webhook import WebhookClient
+    # Load the data
+    HansardData = policy_update.HansardData()
+    # Create the blocks
+    blocks = policy_update.create_policy_update_message(Hansard=HansardData)
+    # Send the blocks
+    slack_webhook = WebhookClient(policy_update.SLACK_URL)
+    for block in blocks:
+        slack_webhook.send(blocks=block, unfurl_links=False, unfurl_media=False)
+
+
+"""
+
+import os
+
 from datetime import datetime
 from datetime import timedelta
 from typing import Literal
@@ -5,6 +30,9 @@ from typing import Tuple
 
 import numpy as np
 import pandas as pd
+
+from dotenv import load_dotenv
+from slack_sdk.webhook import WebhookClient
 
 from discovery_utils import logging
 from discovery_utils.getters import hansard
@@ -15,8 +43,12 @@ from discovery_utils.utils.keywords import get_keywords
 from discovery_utils.utils.llm.mission_check import classify_relevance
 
 
+load_dotenv()
+
 DEBATE_URL = "https://www.theyworkforyou.com/debates/?id="
 MISSIONS = ["ASF", "AFS", "AHL"]
+
+SLACK_URL = os.environ["SLACK_WEBHOOK_URL_TESTING"]
 
 
 class HansardData:
@@ -467,3 +499,18 @@ def create_policy_update_message(
         mission_blocks.append(_collate_mission_slack_block(mission, debate_dicts, quote_dicts))
 
     return _combine_and_chunk_slack_blocks(mission_blocks, message_date, data_start_date, data_end_date)
+
+
+def create_and_send_to_slack(slack_webhook: WebhookClient) -> list[dict]:
+    """Prepare and send the policy update message to Slack
+
+    Assuming default parameters for the policy update message (all missions, 1 week of data)
+    """
+    blocks = create_policy_update_message()
+    for block in blocks:
+        slack_webhook.send(blocks=block, unfurl_links=False, unfurl_media=False)
+    return blocks
+
+
+if __name__ == "__main__":
+    create_and_send_to_slack(slack_webhook=WebhookClient(SLACK_URL))

@@ -1,9 +1,8 @@
-import re
+"""Helper functions to construct Slack blocks for policy update messages"""
 
-import os
+from typing import Dict
+from typing import List
 
-
-from typing import List, Dict
 
 def mission_header(mission: str) -> Dict:
     """Construct mission header block"""
@@ -18,16 +17,17 @@ def mission_header(mission: str) -> Dict:
 
     return {"type": "section", "text": {"type": "mrkdwn", "text": mission_header}}
 
-def message_header(message_date:str, data_start_date:str, data_end_date:str) -> List[Dict]:
+
+def message_header(message_date: str, data_start_date: str, data_end_date: str) -> List[Dict]:
     """Construct message header block
-    
+
     Args:
         message_date (str): Date when posting the message, in format DD-MM-YYYY
         data_start_date (str): Start date of the data, in format DD-MM-YYYY
         data_end_date (str): End date of the data, in format DD-MM-YYYY
 
     Returns:
-        List[Dict]: List of blocks including a header and a context block, where 
+        List[Dict]: List of blocks including a header and a context block, where
             context block indicates data sources and date range
     """
     header = {
@@ -35,7 +35,7 @@ def message_header(message_date:str, data_start_date:str, data_end_date:str) -> 
         "text": {
             "type": "plain_text",
             "text": f"Policy update {message_date}",
-        }
+        },
     }
     context = {
         "type": "context",
@@ -44,22 +44,24 @@ def message_header(message_date:str, data_start_date:str, data_end_date:str) -> 
                 "type": "mrkdwn",
                 "text": f"House of Commons debates ({data_start_date} - {data_end_date})",
             }
-        ]
+        ],
     }
     return [header, context]
-    
+
 
 def divider() -> Dict:
     """Construct a divider block"""
     return {"type": "divider"}
 
+
 def _bullet_point_string(points: List[str]) -> str:
     """Construct a string of bullet points from a list of strings"""
-    return "\n".join([f"• {point}" for point in points])     
+    return "\n".join([f"• {point}" for point in points])
 
-def debate_summary(debate: Dict) -> Dict:
+
+def debate_summary(debate: dict) -> Dict:
     """Construct a block for a single debate summary
-    
+
     Args:
         debate (Dict): Dictionary with keys "title", "summary", "positives", "negatives", and "next_steps".
             For example: {
@@ -74,35 +76,27 @@ def debate_summary(debate: Dict) -> Dict:
         "type": "section",
         "text": {
             "type": "mrkdwn",
-            "text": f"<{debate['url']}|*{debate['title']}*> ({debate['date']})\n{debate['purpose']}"
-        }
+            "text": f"<{debate['url']}|*{debate['title']}*> ({debate['date']})\n{debate['purpose']}",
+        },
     }
     positives = {
         "type": "section",
-        "text":{
-             "type": "mrkdwn",
-             "text": f"*Positives*\n{_bullet_point_string(debate['positives'])}"
-        }
+        "text": {"type": "mrkdwn", "text": f"*Positives*\n{_bullet_point_string(debate['positives'])}"},
     }
     negatives = {
         "type": "section",
-        "text":{
-             "type": "mrkdwn",
-             "text": f"*Negatives*\n{_bullet_point_string(debate['negatives'])}"
-        }
+        "text": {"type": "mrkdwn", "text": f"*Negatives*\n{_bullet_point_string(debate['negatives'])}"},
     }
     next_steps = {
         "type": "section",
-        "text":{
-             "type": "mrkdwn",
-             "text": f"*Next Steps*\n{_bullet_point_string(debate['next_steps'])}"
-        }
+        "text": {"type": "mrkdwn", "text": f"*Next Steps*\n{_bullet_point_string(debate['next_steps'])}"},
     }
     return [summary, positives, negatives, next_steps, divider()]
 
-def quote_block(quote: Dict) -> Dict:
-    """Construct a block with a quote
-    
+
+def quote_block(quote: dict) -> dict:
+    """Construct a block with a quote.
+
     Args:
         quote (Dict): Dictionary with keys "name", "party", "category", "debate", and "text".
     """
@@ -110,6 +104,29 @@ def quote_block(quote: Dict) -> Dict:
         "type": "section",
         "text": {
             "type": "mrkdwn",
-            "text": f"*{quote['name']}* ({quote['party']}) mentioned *{quote['category']}* in *{quote['debate']}*\n\n> {quote['text']}"
-        }
+            "text": (
+                f"*{quote['name']}* ({quote['party']}) mentioned "
+                f"*{quote['category']}* in *{quote['debate']}*\n\n> {quote['text']}"
+            ),
+        },
     }
+
+
+def quote_debate_block(quote_dict: Dict) -> List[Dict]:
+    """Construct a block with a quote
+
+    Args:
+        quote (Dict): Dictionary with keys "name", "party", "category", "debate", and "text".
+    """
+    summary = {
+        "type": "section",
+        "text": {"type": "mrkdwn", "text": f"*{quote_dict['heading']}*: Highlights on {quote_dict['date']}."},
+    }
+    quote_blocks = []
+    for quote in quote_dict["quotes"]:
+        _quote = {
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": f"{quote['summary']} (<{quote['url']}|source>)"},
+        }
+        quote_blocks.append(_quote)
+    return [summary] + quote_blocks + [divider()]

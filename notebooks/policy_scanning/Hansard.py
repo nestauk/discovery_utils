@@ -170,7 +170,7 @@ def clean_meta_data(meta_data: List[Dict]) -> List[Dict]:
     return filtered_meta_data
 
 
-def create_dict(data: List[dict], id: (str)) -> dict:
+def create_dict(data: List[dict], id: str) -> dict:
     """
     Create two dictionaries from the people.json file for faster access to the party of an MP
 

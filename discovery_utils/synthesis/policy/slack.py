@@ -130,3 +130,14 @@ def quote_debate_block(quote_dict: Dict) -> List[Dict]:
         }
         quote_blocks.append(_quote)
     return [summary] + quote_blocks + [divider()]
+
+
+def no_new_debates_block() -> dict:
+    """Construct a block stating that there were no new debates."""
+    return {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": ("No new debates or quotes relevant to the mission"),
+        },
+    }

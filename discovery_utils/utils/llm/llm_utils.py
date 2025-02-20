@@ -75,7 +75,7 @@ def decode_tokens(tokens: list, model_name: str) -> str:
     return text
 
 
-def check_token_length(input: str, model_name: str, max_tokens: int) -> bool:
+def truncate_to_max_tokens(input: str, model_name: str, max_tokens: int) -> bool:
     """Check token length and return truncated input if necessary."""
     n_tokens, tokens = tokenize_text(input, model_name)
     if n_tokens > max_tokens:
@@ -121,7 +121,7 @@ class StructuredOutputGenerator:
         )
         # Check token length
         _input_dict = input_dict.copy()
-        _input_dict["input"] = check_token_length(input_dict["input"], self.model_name, self.max_tokens)
+        _input_dict["input"] = truncate_to_max_tokens(input_dict["input"], self.model_name, self.max_tokens)
         structured_prompt = structured_prompt.format(**_input_dict)
         # Get response from LLM
         return structured_llm.invoke(structured_prompt, config={"callbacks": [self.langfuse_handler]})

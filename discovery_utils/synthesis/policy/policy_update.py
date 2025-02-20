@@ -24,7 +24,6 @@ Alternatively, you can import the functions and use them in your own script.
 import os
 
 from datetime import datetime
-from datetime import timedelta
 from typing import Literal
 from typing import Tuple
 
@@ -41,6 +40,7 @@ from discovery_utils.synthesis.policy import slack
 from discovery_utils.utils.keywords import get_keyword_hits
 from discovery_utils.utils.keywords import get_keywords
 from discovery_utils.utils.llm.mission_check import classify_relevance
+from discovery_utils.utils.timestamps import get_weekly_start_date
 
 
 load_dotenv()
@@ -98,21 +98,6 @@ def _people_party_memberships(people_dict: dict) -> pd.DataFrame:
         .drop_duplicates("person_id")
         .merge(orgs_df, left_on="on_behalf_of_id", right_on="id", how="left", suffixes=("_", "_org"))
     )[["person_id", "post_id", "start_date", "start_reason", "name_org"]]
-
-
-def _get_weekly_start_date(end_date: str, weeks: int = 1) -> str:
-    """Get the start date for a weekly period ending at the specified end_date
-
-    Args:
-        end_date: The end date of the period, in the format "YYYY-MM-DD"
-        weeks: The number of weeks to go back
-
-    Returns:
-        The start date of the period, in the format "YYYY-MM-DD"
-    """
-    data_end_date = datetime.strptime(end_date, "%Y-%m-%d")
-    weeks_ago = data_end_date - timedelta(weeks=weeks)
-    return weeks_ago.strftime("%Y-%m-%d")
 
 
 def _get_speeches_for_period(Hansard: HansardData, start_date: str, end_date: str) -> pd.DataFrame:
@@ -209,36 +194,45 @@ def _relevance_check(
 
 
 def _get_speech_context(debates_df: pd.DataFrame, speech_dict: dict) -> str:
-    """Get the the previous and next speeches for a given speech"""
+    """Get the previous and next speeches for a given speech"""
     # Locate the speech index
     speech_index = debates_df[debates_df["speech_id"] == speech_dict["speech_id"]].index[0]
 
     # Retrieve previous, current, and next speech data
-    # Quick hack to avoid index out of bounds
-    try:
-        prev_speech = debates_df.iloc[speech_index - 1]
-    except IndexError:
-        prev_speech = debates_df.iloc[speech_index]
+    prev_speech = debates_df.iloc[speech_index - 1] if speech_index > 0 else None
     current_speech = debates_df.iloc[speech_index]
-    try:
-        next_speech = debates_df.iloc[speech_index + 1]
-    except IndexError:
-        next_speech = debates_df.iloc[speech_index]
+    next_speech = debates_df.iloc[speech_index + 1] if speech_index < len(debates_df) - 1 else None
 
     # Format and return the speech context
-    return (
-        f"# PREVIOUS SPEECH\n"
-        f"Speaker: {prev_speech.speakername} ({prev_speech.name_org})\n"
-        f"Full speech: {prev_speech.speech}\n"
+    context = []
+
+    if prev_speech is not None:
+        context.append(
+            f"# PREVIOUS SPEECH\n"
+            f"Speaker: {prev_speech.speakername} ({prev_speech.name_org})\n"
+            f"Full speech: {prev_speech.speech}\n"
+        )
+    else:
+        context.append("# PREVIOUS SPEECH\nNo previous speech available.\n")
+
+    context.append(
         f"# SPEECH WITH KEYWORDS\n"
         f"Keywords: {speech_dict['keyword']}\n"
         f"Sentences with keywords: {speech_dict['sentence']}\n"
         f"Speaker: {current_speech.speakername} ({current_speech.name_org})\n"
         f"Full speech: {current_speech.speech}\n"
-        f"# NEXT SPEECH\n"
-        f"Speaker: {next_speech.speakername} ({next_speech.name_org})\n"
-        f"Full speech: {next_speech.speech}\n"
     )
+
+    if next_speech is not None:
+        context.append(
+            f"# NEXT SPEECH\n"
+            f"Speaker: {next_speech.speakername} ({next_speech.name_org})\n"
+            f"Full speech: {next_speech.speech}\n"
+        )
+    else:
+        context.append("# NEXT SPEECH\nNo next speech available.\n")
+
+    return "".join(context)
 
 
 def _check_robust_keywords(mission_debates_df: pd.DataFrame, keywords_dict: dict) -> pd.DataFrame:
@@ -373,6 +367,8 @@ def _collate_mission_slack_block(
     blocks = [slack.mission_header(mission)]
     blocks += debate_blocks
     blocks += quote_blocks
+    if (len(debate_blocks) + len(quote_blocks)) == 0:
+        blocks.append(slack.no_new_debates_block())
     return blocks
 
 
@@ -485,7 +481,7 @@ def create_policy_update_message(
     # Determine dates
     message_date = message_date or datetime.now().strftime("%Y-%m-%d")
     data_end_date = data_end_date or message_date
-    data_start_date = data_start_date or _get_weekly_start_date(data_end_date, weeks=weeks)
+    data_start_date = data_start_date or get_weekly_start_date(data_end_date, weeks=weeks)
 
     # Get the speeches to use in this update
     speeches_df = _get_speeches_for_period(Hansard, data_start_date, data_end_date)

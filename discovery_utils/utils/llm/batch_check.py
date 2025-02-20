@@ -33,7 +33,10 @@ from discovery_utils.utils.llm.llm_utils import get_llm
 
 
 class LLMProcessor:
-    """Process text data using a language model and save the results to a JSONL file."""
+    """Process text data using a language model and save the results to a JSONL file.
+
+    The default behaviour of the class is to function as a relevance checker.
+    """
 
     def __init__(
         self,
@@ -166,9 +169,11 @@ class LLMProcessor:
             asyncio.run(self.process_text_data(text_data, batch_size, sleep_time))
 
 
-def generate_system_message(config: Union[str, dict]) -> str:
+def generate_relevance_check_system_message(config: Union[str, dict]) -> str:
     """
-    Generate a system message using the provided configuration.
+    Generate a system message using a configuration that includes scope statements and keywords.
+
+    See example_relevance_check_config.yaml for an example configuration file.
 
     Args:
         config (dict or str): Configuration as a dictionary or file path to a YAML config.

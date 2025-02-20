@@ -225,13 +225,16 @@ def generate_landscape_keywords(
     viz_df: pd.DataFrame,
     n_keyword_clusters: int = N_KEYWORD_CLUSTERS,
     random_state: int = RANDOM_STATE,
+    x_col: str = "umap_x",
+    y_col: str = "umap_y",
+    text_col: str = "text",
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Generate keywords for the landscape"""
     clusterer = KMeans(n_clusters=n_keyword_clusters, random_state=random_state)
-    clusterer.fit(viz_df[["umap_x", "umap_y"]])
+    clusterer.fit(viz_df[[x_col, y_col]])
     soft_clusters = list(clusterer.labels_)
 
-    title_texts = viz_df["text"].apply(preproc)
+    title_texts = viz_df[text_col].apply(preproc)
     _cluster_texts = concat_texts_in_cluster(title_texts, soft_clusters)
     _cluster_keywords = generate_cluster_keywords(
         documents=list(_cluster_texts.values()),

@@ -8,7 +8,6 @@ More info here: https://github.com/nestauk/discovery_utils/wiki/Checking-data-wi
 import asyncio
 import json
 import math
-import os
 
 from datetime import datetime
 from datetime import timezone
@@ -24,13 +23,13 @@ import pandas as pd
 import yaml
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
-from langfuse.callback import CallbackHandler
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import create_model
 
 from discovery_utils import logging
+from discovery_utils.utils.llm.llm_utils import get_langfuse_handler
+from discovery_utils.utils.llm.llm_utils import get_llm
 
 
 class LLMProcessor:
@@ -45,21 +44,13 @@ class LLMProcessor:
         output_fields: Optional[List[Dict[str, str]]] = None,
         session_name: Optional[str] = None,
     ) -> None:
-        self.llm = ChatOpenAI(
-            openai_api_key=os.getenv("OPENAI_API_KEY"), model_name=model_name, temperature=temperature
-        )
+        self.llm = get_llm(model_name=model_name, temperature=temperature)
         if session_name is None:
             session_name = ""
         else:
             session_name = f"{session_name}_"
 
-        self.langfuse_handler = CallbackHandler(
-            user_id=os.environ.get("USER_EMAIL"),
-            session_id=f"{session_name}{datetime.today().isoformat()}",
-            secret_key=os.environ.get("LANGFUSE_SECRET_KEY"),
-            public_key=os.environ.get("LANGFUSE_PUBLIC_KEY"),
-            host=os.environ.get("LANGFUSE_HOST"),
-        )
+        self.langfuse_handler = get_langfuse_handler(session_id=f"{session_name}{datetime.today().isoformat()}")
         self.output_path = Path(output_path)
         self.model_name = model_name
         self.temperature = temperature

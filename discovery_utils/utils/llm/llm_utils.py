@@ -5,6 +5,7 @@ from datetime import datetime
 import tiktoken
 
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import AzureChatOpenAI
 from langchain_openai import ChatOpenAI
 from langfuse.callback import CallbackHandler
 from pydantic import BaseModel
@@ -12,7 +13,11 @@ from pydantic import BaseModel
 from discovery_utils import logging
 
 
+LLM_SERVICE = os.getenv("LLM_SERVICE")
+
+
 def get_langfuse_handler(session_id: str = None) -> CallbackHandler:
+    """Initialise a Langfuse callback handler"""
     if session_id is None:
         session_id = f"{datetime.today().isoformat()}"
 
@@ -25,12 +30,30 @@ def get_langfuse_handler(session_id: str = None) -> CallbackHandler:
     )
 
 
-def get_llm(model_name: str, temperature: float) -> ChatOpenAI:
+def get_llm(model_name: str = None, temperature: float = None) -> ChatOpenAI:
     """Get an LLM instance
 
-    In the future, this function might accomodate different types of LLM providers
+    Args:
+        model_name: Name of the model to use
+        temperature: Temperature setting for the model
+
+    Returns:
+        ChatOpenAI or AzureChatOpenAI instance
     """
-    return ChatOpenAI(openai_api_key=os.getenv("OPENAI_API_KEY"), model_name=model_name, temperature=temperature)
+    if LLM_SERVICE == "Azure":
+        logging.info("Using Azure OpenAI")
+        return AzureChatOpenAI(
+            openai_api_version=os.getenv("AZURE_OPENAI_API_VERSION"),
+            azure_deployment=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            openai_api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            temperature=temperature,
+        )
+    elif LLM_SERVICE == "OpenAI":
+        if (model_name is None) or (temperature is None):
+            raise ValueError("Model name and temperature must be specified when not using Azure OpenAI.")
+        logging.info("Using OpenAI")
+        return ChatOpenAI(openai_api_key=os.getenv("OPENAI_API_KEY"), model_name=model_name, temperature=temperature)
 
 
 def tokenize_text(text: str, model_name: str) -> int:
@@ -69,7 +92,8 @@ class StructuredOutputGenerator:
             Should contain "system_message" and "user_message" keys.
     """
 
-    def __init__(self, model_dict: dict, output_class: BaseModel, prompts: dict):
+    def __init__(self, model_dict: dict, output_class: BaseModel, prompts: dict) -> None:
+        """Initialise the structured output generator."""
         self.llm = get_llm(model_dict["model_name"], model_dict["temperature"])
         self.model_name = model_dict["model_name"]
         self.temperature = model_dict["temperature"]

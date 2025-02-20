@@ -13,7 +13,10 @@ from pydantic import BaseModel
 from discovery_utils import logging
 
 
-LLM_SERVICE = os.getenv("LLM_SERVICE")
+try:
+    LLM_SERVICE = os.getenv("LLM_SERVICE")
+except KeyError:
+    LLM_SERVICE = "OpenAI"
 
 
 def get_langfuse_handler(session_id: str = None) -> CallbackHandler:

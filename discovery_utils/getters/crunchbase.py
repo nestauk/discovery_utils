@@ -296,7 +296,12 @@ class CrunchbaseGetter:
 
     @property
     def latest_funding_rounds(self) -> pd.DataFrame:
-        """Get the latest Crunchbase funding rounds data"""
+        """Get the latest Crunchbase funding rounds data
+        
+        Note that that there is a row for each unique company and investor pair.
+        This means that one funding round will be represented by multiple rows.
+        When aggregating funding data, need to deduplicate by funding_round_id column.
+        """
         if self._latest_funding_rounds is None:
             self._latest_funding_rounds = self._get_enriched_latest_funding_rounds()
         return self._latest_funding_rounds

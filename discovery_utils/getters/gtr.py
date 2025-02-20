@@ -482,7 +482,7 @@ class GtrGetter:
             .assign(text=lambda df: df.text.apply(lambda x: re.sub(boilerplate_empty_text, "", x)))
             .drop(columns=text_fields)
         )
-
+    
     @property
     def vector_db(self) -> embeddings.LanceDBConnection:
         """Get the LanceDB connection"""

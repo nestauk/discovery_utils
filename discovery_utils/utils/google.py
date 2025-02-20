@@ -13,14 +13,17 @@ from pathlib import PosixPath
 
 import dotenv
 
+import gspread
+from gspread.exceptions import IncorrectCellLabel, WorksheetNotFound
 from df2gspread import gspread2df as g2d
+from df2gspread import df2gspread as d2g
 from discovery_utils import PROJECT_DIR
 from discovery_utils import S3_BUCKET
 from discovery_utils import logging
 from discovery_utils.utils.s3 import s3_client
 from oauth2client.service_account import ServiceAccountCredentials
 from pandas import DataFrame
-
+import gspread_formatting as gsf
 
 dotenv.load_dotenv()
 
@@ -65,6 +68,13 @@ def find_credentials(credentials_env_var: str) -> PosixPath:
     return credentials_json
 
 
+def load_gsheet_credentials() -> ServiceAccountCredentials:
+    """Get credentials for accessing Google Sheets"""
+    google_credentials_json = find_credentials("GOOGLE_SHEETS_CREDENTIALS")
+    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    return ServiceAccountCredentials.from_json_keyfile_name(google_credentials_json, scope)    
+
+
 def access_google_sheet(sheet_id: str, sheet_name: str) -> DataFrame:
     """
     Access a specified Google Sheet and return its contents as a pandas DataFrame.
@@ -92,15 +102,80 @@ def access_google_sheet(sheet_id: str, sheet_name: str) -> DataFrame:
       index names, respectively.
     """
     # Load the credentials for use with Google Sheets
-    google_credentials_json = find_credentials("GOOGLE_SHEETS_CREDENTIALS")
-
-    # Define the scope for the Google Sheets API (we only want Google sheets)
-    scope = ["https://spreadsheets.google.com/feeds"]
-
-    # Authenticate using the credentials JSON file
-    credentials = ServiceAccountCredentials.from_json_keyfile_name(google_credentials_json, scope)
-
+    credentials = load_gsheet_credentials()
     # Load the data into a pandas DataFrame
     data = g2d.download(sheet_id, sheet_name, credentials=credentials, col_names=True, row_names=True)
-
     return data
+
+
+def connect_to_gsheet(sheet_id: str) -> gspread.Spreadsheet:
+    """
+    Connect to an existing Google Sheet by its unique identifier.
+
+    Args:
+        sheet_id (str): The unique identifier for the Google Sheet.
+
+    Returns:
+        The Google Sheet object.
+    """
+    credentials = load_gsheet_credentials()
+    client = gspread.authorize(credentials)
+    # Open the existing Google Sheet by ID
+    spreadsheet = client.open_by_key(sheet_id)
+    logging.info(f"Connected to Google Sheet: {spreadsheet.title}")    
+    return spreadsheet
+
+
+def upload_data_to_gsheet(sheet_id: str, dataframes: dict) -> None:
+    """
+    Uploads multiple DataFrames to an existing Google Sheet as separate sheets.
+
+    Args:
+        sheet_id (str): The Google Sheet ID where data should be uploaded.
+        dataframes (dict): A dictionary where keys are sheet names and values are pandas DataFrames.
+    """
+    credentials = load_gsheet_credentials()
+    # Upload each DataFrame to the corresponding sheet
+    for sheet_name, df in dataframes.items():
+        try:
+            spreadsheet = connect_to_gsheet(sheet_id)
+            worksheet = spreadsheet.worksheet(sheet_name)
+        except WorksheetNotFound:
+            worksheet = spreadsheet.add_worksheet(title=sheet_name, rows="100", cols="20")
+        # Hack to avoid IncorrectCellLabel
+        worksheet.update('A1', [['1']])
+        # Upload data
+        logging.info(f"Uploading DataFrame to sheet: {sheet_name}")
+        d2g.upload(df, sheet_id, sheet_name, credentials=credentials, row_names=True)
+        # Delete the first column (index)
+        worksheet.delete_columns(1) 
+    logging.info("Upload completed successfully.")
+
+
+def format_gsheet(sheet_id: str, sheet_name: str, freeze_cols: int = 0) -> None:
+    """Apply formatting to a Google Sheet
+    
+    Specifically: freeze the header row, apply background colour to the header row, 
+    and add filters.
+
+    Args:
+        sheet_id (str): The unique identifier for the Google Sheets file.
+        sheet_name (str): The name of the individual sheet within the Google Sheets file.
+        freeze_cols (int): The number of columns to freeze. Default is 0.
+    """
+    spreadsheet = connect_to_gsheet(sheet_id)
+    worksheet = spreadsheet.worksheet(sheet_name)
+
+    # Freeze the header row
+    worksheet.freeze(rows=1, cols=freeze_cols)
+
+    # Apply background colour to header row
+    header_format = gsf.CellFormat(
+        backgroundColor=gsf.Color(red=1, green=1, blue=0.33), 
+        textFormat=gsf.TextFormat(bold=True, fontSize=10),
+        horizontalAlignment='LEFT'
+    )
+    gsf.format_cell_range(worksheet, '1:1', header_format)    
+
+    # Add filters
+    worksheet.set_basic_filter("A1:AZ") 

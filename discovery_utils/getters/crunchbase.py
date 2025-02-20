@@ -19,6 +19,7 @@ from numpy import dot
 
 from discovery_utils.utils import embeddings
 from discovery_utils.utils import s3
+from discovery_utils.utils.io import remap_dict
 
 
 S3_BUCKET = os.environ["S3_BUCKET"]
@@ -64,6 +65,7 @@ class CrunchbaseGetter:
         self._people_descriptions = None
         self._degrees = None
         self._organisation_categories = None
+        self._organisation_nesta_categories = None
         self._category_groups = None
         self._group_to_categories = None
         self._embedding_model = None
@@ -288,6 +290,17 @@ class CrunchbaseGetter:
         return self._organisation_categories
 
     @property
+    def organisation_nesta_categories(self) -> pd.DataFrame:
+        """Get the mapping between Crunchbase organisations and Nesta categories"""
+        if self._organisation_nesta_categories is None:
+            self._organisation_nesta_categories = (
+                self.organisations_enriched[['id', 'mission_labels', 'topic_labels']]
+                .assign(mission_labels = lambda df: df.mission_labels.apply(lambda x: x.split(",") if (type(x) is str) else []))
+                .assign(topic_labels = lambda df: df.topic_labels.apply(lambda x: x.split(",") if (type(x) is str) else []))
+            )
+        return self._organisation_nesta_categories
+
+    @property
     def category_groups(self) -> pd.DataFrame:
         """Get Crunchbase categories and the groups they belong to"""
         if self._category_groups is None:
@@ -392,6 +405,25 @@ class CrunchbaseGetter:
             raise ValueError(f"category_type must be one of ['narrow', 'broad'], not {category_type}.")
         return self.organisations_enriched.query("id in @matching_ids").drop_duplicates(subset="id")
 
+    
+    def get_companies_in_nesta_categories(
+            self, 
+            category_type: Literal["mission_labels", "topic_labels"],
+            categories: List[str], 
+        ) -> pd.DataFrame:
+        """Get all companies belonging to the provided categories"""
+        matching_ids = (
+            self.organisation_nesta_categories
+            .explode(category_type)
+            .query(f"{category_type} in @categories")
+            .id.to_list()
+        )
+        return (
+            self.organisations_enriched
+            .query("id in @matching_ids")
+            .drop_duplicates(subset="id")
+        )
+
     def select_funding_rounds(
         self,
         org_ids: List[str] = None,
@@ -467,6 +499,26 @@ class CrunchbaseGetter:
             .drop(columns="vector")
             .head(n_results)
         )
+
+    # def get_organisation_text(self) -> pd.DataFrame:
+    #     """Get full available text data for projects"""
+    #     text_fields = self._default_text_fields
+    #     boilerplate_empty_text = "Abstracts are not currently available in GtR for all funded research. \
+    #         This is normally because the abstract was not required at the time of proposal submission, \
+    #         but may be because it included sensitive information such as personal details"
+
+    #     columns = ["id"] + text_fields
+
+    #     return (
+    #         self.projects[columns]
+    #         .copy()
+    #         .fillna("")
+    #         .astype({field: str for field in text_fields})
+    #         .assign(text=lambda df: df[text_fields].apply(lambda x: " ".join(x), axis=1))
+    #         .assign(text=lambda df: df.text.str.strip())
+    #         .assign(text=lambda df: df.text.apply(lambda x: re.sub(boilerplate_empty_text, "", x)))
+    #         .drop(columns=text_fields)
+    #     )
 
     @property
     def vector_db(self) -> embeddings.LanceDBConnection:
@@ -617,16 +669,51 @@ REGION_TO_COUNTRIES = {
     "Rest of the World": [None, "BMU", "TTO", "GLP", "CYM", "IMN"],
 }
 
-
-def get_country_to_region(region_to_countries: Dict[str, List[str]]) -> Dict[str, str]:
-    """Transform the region-to-countries mapping back to countries-to-region."""
-    original_mapping = {}
-    for region, countries in region_to_countries.items():
-        for country in countries:
-            original_mapping[country] = region
-    return original_mapping
-
+INVESTMENT_STAGES = {
+    'early_stage': [
+        'pre_seed',
+        'seed',
+        'angel',
+        'series_a',
+        'series_b',
+        'convertible_note',
+        'equity_crowdfunding',
+        'product_crowdfunding',
+        'grant',
+        'non_equity_assistance',
+        'initial_coin_offering'
+    ],
+    'growth_stage': [
+        'series_c',
+        'series_d',
+        'series_e',
+        'series_f',
+        'series_g',
+        'series_h',
+        'series_i',
+        'series_j'
+    ],
+    'late_stage': [
+        'private_equity',
+        'post_ipo_equity',
+        'post_ipo_debt',
+        'post_ipo_secondary',
+        'secondary_market'
+    ],
+    'other': [
+        'corporate_round',
+        'debt_financing'
+    ],
+    'uncategorized': [
+        'series_unknown',
+        'undisclosed'
+    ]
+}
 
 def country_to_region() -> Dict[str, str]:
     """Get the mapping from countries to regions."""
-    return get_country_to_region(REGION_TO_COUNTRIES)
+    return remap_dict(REGION_TO_COUNTRIES)
+
+def investment_type_to_stage() -> dict:
+    """Get the mapping from investments to stages"""
+    return remap_dict(INVESTMENT_STAGES)

@@ -97,8 +97,6 @@ def find_keyword_hits(keywords: List[List[str]], sentences: List[str]) -> List[b
     for text in sentences:
         keyword_hits = True
         for keyword in keywords:
-            # Note that we are looking for exact matches
-            # Make the matching case insensitive
             keyword_hits = keyword_hits and (keyword.lower() in text.lower())
         hits.append(False or keyword_hits)
     return hits

@@ -226,7 +226,7 @@ def generate_landscape_keywords(
     clusterer.fit(viz_df[[x_col, y_col]])
     soft_clusters = list(clusterer.labels_)
 
-    title_texts = viz_df["text"].apply(preproc)
+    title_texts = viz_df[text_col].apply(preproc)
     _cluster_texts = cluster_texts(title_texts, soft_clusters)
     _cluster_keywords = cluster_keywords(
         documents=list(_cluster_texts.values()),

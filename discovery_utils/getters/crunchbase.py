@@ -9,6 +9,7 @@ import os
 import re
 
 from pathlib import Path
+from typing import Dict
 from typing import List
 from typing import Literal
 
@@ -68,6 +69,10 @@ class CrunchbaseGetter:
         self._embedding_model = None
         self._category_vectors = None
         self._group_vectors = None
+        self._latest_grants = None
+        self._latest_funding_rounds = None
+        self._latest_startups = None
+        self._latest_smart_money_investors = None
         # Vector DB
         self.VectorDB = embeddings.VectorDB(
             db_path=vector_db_path,
@@ -141,6 +146,26 @@ class CrunchbaseGetter:
     def _get_enriched_funding_rounds(self) -> pd.DataFrame:
         """Get enriched funding rounds data"""
         key = f"{S3_PREFIX}enriched/funding_rounds_full.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_grants(self) -> pd.DataFrame:
+        """Get the latest Crunchbase grants data"""
+        key = f"{S3_PREFIX}enriched/grants_new_only.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_funding_rounds(self) -> pd.DataFrame:
+        """Get the latest Crunchbase funding rounds data"""
+        key = f"{S3_PREFIX}enriched/funding_rounds_for_slack.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_startups(self) -> pd.DataFrame:
+        """Get the latest Crunchbase startups data"""
+        key = f"{S3_PREFIX}enriched/orgs_for_slack.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_smart_money_investors(self) -> pd.DataFrame:
+        """Get the latest Crunchbase smart money investors data"""
+        key = f"{S3_PREFIX}enriched/smart_money_for_slack.parquet"
         return self._get_table(key)
 
     @property
@@ -261,6 +286,39 @@ class CrunchbaseGetter:
         if self._degrees is None:
             self._degrees = self._get_cb_table("degrees")
         return self._degrees
+
+    @property
+    def latest_grants(self) -> pd.DataFrame:
+        """Get the latest Crunchbase grants data"""
+        if self._latest_grants is None:
+            self._latest_grants = self._get_enriched_latest_grants()
+        return self._latest_grants
+
+    @property
+    def latest_funding_rounds(self) -> pd.DataFrame:
+        """Get the latest Crunchbase funding rounds data
+        
+        Note that that there is a row for each unique company and investor pair.
+        This means that one funding round will be represented by multiple rows.
+        When aggregating funding data, need to deduplicate by funding_round_id column.
+        """
+        if self._latest_funding_rounds is None:
+            self._latest_funding_rounds = self._get_enriched_latest_funding_rounds()
+        return self._latest_funding_rounds
+
+    @property
+    def latest_startups(self) -> pd.DataFrame:
+        """Get the latest Crunchbase startups data"""
+        if self._latest_startups is None:
+            self._latest_startups = self._get_enriched_latest_startups()
+        return self._latest_startups
+
+    @property
+    def latest_smart_money_investors(self) -> pd.DataFrame:
+        """Get the latest Crunchbase smart money investors data"""
+        if self._latest_smart_money_investors is None:
+            self._latest_smart_money_investors = self._get_enriched_latest_smart_money_investors()
+        return self._latest_smart_money_investors
 
     @property
     def unique_funding_round_types(self) -> List[str]:
@@ -479,3 +537,153 @@ class CrunchbaseGetter:
     def vector_search(self, query: str, n_results: int = 10) -> pd.DataFrame:
         """Search the LanceDB for the query"""
         return self.VectorDB.vector_search(query, n_results)
+
+
+REGION_TO_COUNTRIES = {
+    "North America + Australia": ["USA", "CAN", "AUS", "NZL"],
+    "South + Central America": [
+        "VEN",
+        "ARG",
+        "BRA",
+        "CHL",
+        "COL",
+        "PER",
+        "URY",
+        "PRY",
+        "ECU",
+        "BOL",
+        "GUY",
+        "SUR",
+        "MEX",
+        "CRI",
+        "SLV",
+        "GTM",
+        "HND",
+        "PAN",
+        "NIC",
+    ],
+    "Europe": [
+        "IRL",
+        "LUX",
+        "CHE",
+        "ESP",
+        "DEU",
+        "FRA",
+        "FIN",
+        "SWE",
+        "NLD",
+        "BEL",
+        "DNK",
+        "CZE",
+        "POL",
+        "EST",
+        "AUT",
+        "ITA",
+        "ROU",
+        "CYP",
+        "NOR",
+        "PRT",
+        "BGR",
+        "BLR",
+        "SVN",
+        "ARM",
+        "HUN",
+        "ISL",
+        "LVA",
+        "LTU",
+        "HRV",
+        "MKD",
+        "BIH",
+        "SRB",
+        "SVK",
+        "GEO",
+        "MDA",
+        "ALB",
+        "SMR",
+        "AND",
+        "GIB",
+        "FRO",
+        "LIE",
+        "IMN",
+        "GGY",
+        "JEY",
+        "ALA",
+    ],
+    "UK": ["GBR"],
+    "Asia": [
+        "IND",
+        "HKG",
+        "ISR",
+        "RUS",
+        "KOR",
+        "SGP",
+        "JPN",
+        "ARE",
+        "CHN",
+        "PHL",
+        "IDN",
+        "THA",
+        "TUR",
+        "MYS",
+        "TWN",
+        "PAK",
+        "LBN",
+        "ARM",
+        "BGD",
+        "KWT",
+        "VNM",
+        "MDV",
+        "JOR",
+        "LKA",
+        "IRN",
+        "SYR",
+        "KAZ",
+        "UZB",
+        "IRQ",
+        "OMN",
+        "PSE",
+        "TJK",
+        "BTN",
+        "TLS",
+        "MAC",
+        "MMR",
+        "MNG",
+        "KHM",
+        "LAO",
+        "BRN",
+    ],
+    "Africa": [
+        "ZAF",
+        "MUS",
+        "EGY",
+        "GHA",
+        "KEN",
+        "NGA",
+        "MAR",
+        "CIV",
+        "ETH",
+        "TUN",
+        "MOZ",
+        "UGA",
+        "SEN",
+        "ZWE",
+        "RWA",
+        "SDN",
+    ],
+    "Middle East": ["SAU", "ARE", "KWT", "QAT", "OMN", "IRQ", "IRN", "SYR", "JOR", "LBN", "ISR", "YEM"],
+    "Rest of the World": [None, "BMU", "TTO", "GLP", "CYM", "IMN"],
+}
+
+
+def get_country_to_region(region_to_countries: Dict[str, List[str]]) -> Dict[str, str]:
+    """Transform the region-to-countries mapping back to countries-to-region."""
+    original_mapping = {}
+    for region, countries in region_to_countries.items():
+        for country in countries:
+            original_mapping[country] = region
+    return original_mapping
+
+
+def country_to_region() -> Dict[str, str]:
+    """Get the mapping from countries to regions."""
+    return get_country_to_region(REGION_TO_COUNTRIES)

@@ -1,0 +1,57 @@
+---
+model_name: "gpt-4o-mini"
+temperature: 0
+max_tokens: 120000
+
+relevance_classifier:
+  system_message: |
+    You are an expert in policy relevance classification.
+    Determine the relevance of the text to the given policy areas.
+    Use the provided text to decide if it is relevant, irrelevant, or unclear for each policy area: if relevant, output True; if irrelevant, output False.
+  user_message: |
+    Classify the text based on its relevance to the following policy areas:
+    Determine if the text is relevant to this policy area and provide the corresponding classification (True/False).
+    Use the information provided in the text to make your decision.
+    If the relevance is very unclear or the text does not provide enough information, classify it as False.
+    \n\n## Policy area: {policy_area}
+    \n\n##Text:\n{input}
+
+mission_info:
+  ASF: |
+    Nesta's Sustainable Future Mission places significant emphasis on heat pumps and
+    other low-carbon heating technologies (such as heat networks, geothermal, electric heating and hydrogen) as key technologies for decarbonising homes and transitioning to a low-carbon economy.
+    Mission scope also includes general decarbonisation efforts, such as renewable energy generation, energy storage, policies around boilers and heating in general, grid capacity, energy efficiency measures,
+    utilities companies, energy bills, consumer protection, Great British Energy (GB Energy), EPC (Energy Performance Certificates), Future Homes Standard,
+    Boiler Upgrade Scheme, Low Carbon Heat Scheme, Warm Homes Plan, Heat networks regulation, and green technologies (including solar, wind, hydrogen, carbon capture and others)
+    Key focus areas include:
+    Scaling Heat Pump Adoption: Promoting widespread use of heat pumps to replace traditional fossil fuel heating systems, such as gas boilers, to significantly reduce carbon emissions from residential heating.
+    Reducing Costs and Barriers: Supporting innovation and policy recommendations to lower the upfront and operational costs of heat pump installation, making them accessible to more households. This includes lowering the price of electricity
+    and increasing the efficiency of heat pumps.
+    Improving Energy Efficiency: Encouraging the adoption of energy-efficient heat pump systems alongside home insulation improvements to maximise impact.
+    Raising Public Awareness: Educating homeowners about the benefits of heat pumps, including lower energy bills, improved comfort, and environmental benefits.
+    Policy and Industry Collaboration: Working with governments, local authorities, and industry stakeholders to create supportive frameworks, such as incentives, subsidies, and streamlined installation processes.
+    Data and Evidence for Innovation: Using data-driven approaches to identify opportunities for improving heat pump technology, deployment strategies, and user satisfaction.
+    Equitable Transition: Ensuring low-income households can access heat pumps through targeted financial support and initiatives to prevent energy poverty.
+  AFS: |
+    Nesta's Fairer Start Mission focuses on improving outcomes for children aged 0-5, especially from disadvantaged backgrounds.
+    Mission scope includes early childhood development, early years education, preschool education, reducing inequalities, parental support, innovation in early years services, using AI and data to improve services, edtech, professional development in the early years education sector, Sure Start 2.0, Minimum income guarantee (MIG), Scottish Child Payment (SCP), Two Child Limit (2CL)
+    Key aspects include:
+    Early Childhood Development: Supporting children to reach developmental milestones, particularly in cognitive, emotional, and social skills by the age of five.
+    Reducing Inequalities: Addressing systemic disparities in access to quality early education, healthcare, and family support services.
+    Parental Support: Enhancing parental engagement through evidence-based interventions and tools to improve parenting practices.
+    Innovation in Early Years Services: Integrating data-driven and innovative approaches, including AI, to improve the design and delivery of early childhood services.
+    Collaboration with Local Authorities and Partners: Working with schools, healthcare providers, and local services to create holistic and seamless support systems.
+    Long-Term Impact: Focusing on initiatives that have the potential to improve long-term outcomes for children, including education and future employment prospects.
+  AHL: |
+    Nesta's A Healthy Life Mission aims to increase the number of years people in the UK live in good health, with a particular focus on reducing health inequalities. A significant area of this mission is tackling obesity to improve health outcomes and prevent related diseases.
+    Mission scope also includes broader health topics such as public health policies, healthcare access, preventive health care, and social determinants of health, HFSS food (high in fat, salt, and sugar), ultraprocessed food, 
+    Key aspects include:
+    Reducing Obesity Rates: Targeting a reduction in rates of obesity, especially in communities with high levels of health inequality, through innovative interventions and support systems.
+    Healthy Food Environments: Collaborating with retailers, policymakers, and local authorities to make healthier food options more affordable, accessible, and appealing.
+    Behavioral Science: Applying evidence from behavioral science to design interventions that encourage healthier eating habits, such as reducing the consumption of high-calorie processed foods.
+    Innovative Technology and Data: Leveraging data-driven approaches and technology to identify food consumption patterns, as well as new food technologies like reformulated foods, kitchen tech and similar.
+    Focusing on Childhood Obesity: Addressing obesity early in life by supporting healthier school meals, improving access to physical activity programs, and educating families on nutrition.
+    Medical advances: New drugs and treatments for obesity (such as GLP-1 receptor agonists), as well as preventive measures and early interventions to reduce the risk of obesity-related diseases.
+    Collaborative Approaches: Partnering with healthcare providers, community organisations, and businesses to scale evidence-based strategies for long-term impact.
+    Targeting Inequalities: Ensuring that solutions are equitable and address the disproportionate impact of obesity on low-income and marginalised communities.
+    By addressing obesity, Nesta aims to not only improve individual health but also reduce the burden on healthcare systems and create healthier, more resilient communities.

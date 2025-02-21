@@ -210,3 +210,69 @@ def enrich_topic_labels(text_df: pd.DataFrame, split_sentences_flag: bool = True
     for mission in ["ASF", "AHL", "AFS", "X"]:
         labels_df.append(enrich_keyword_labels(text_df, mission, split_sentences_flag=split_sentences_flag))
     return pd.concat(labels_df, ignore_index=True).pipe(transform_labels_df)
+
+
+def get_keyword_hits(speech: str, keywords_dict: dict) -> pd.DataFrame:
+    """Get keywords and sentences where they appear in a speech
+
+    Args:
+        speech (str): Speech text
+        keywords_dict (dict): Dictionary of keywords
+
+    Returns:
+        pd.DataFrame: DataFrame with columns 'category', 'keyword', 'sentence', and 'marked_sentence'
+    """
+
+    hits_keywords = []
+    hits_sentences = []
+    hits_categories = []
+    marked_sentences = []
+    sents = split_sentences([speech], ids=[0])[0]
+
+    # Fetch general filtering keywords
+    keywords_general = None
+    for cat in keywords_dict:
+        if "general terms" in cat:
+            keywords_general = keywords_dict[cat]
+            general_cat = cat  # noqa: F841
+    if keywords_general is not None:
+        general_hits = np.array([find_keyword_hits(kw, sents) for kw in keywords_general]).any(axis=0)
+    else:
+        general_hits = [True] * len(sents)
+        general_cat = "not specified"  # noqa: F841
+
+    for cat in keywords_dict:
+        for kw in keywords_dict[cat]:
+            hits = find_keyword_hits(kw, sents)
+            for i, hit in enumerate(hits):
+                if hit and general_hits[i]:
+
+                    hits_keywords.append(kw)
+                    hits_sentences.append(sents[i])
+                    hits_categories.append(cat)
+
+                    # Add asterisks around the full words containing the matched keyword
+                    marked_sentence = sents[i]
+                    for keyword in kw:
+                        # Regex to find substrings and expand to full words
+                        pattern = r"\b(\S*" + re.escape(keyword) + r"\S*)\b"
+                        marked_sentence = re.sub(pattern, r"*\1*", marked_sentence)
+
+                    marked_sentences.append(marked_sentence)
+
+    df = (
+        pd.DataFrame(
+            {
+                "category": hits_categories,
+                "keyword": hits_keywords,
+                "sentence": hits_sentences,
+                "marked_sentence": marked_sentences,
+            }
+        )
+        .query("category != @general_cat")
+        .groupby("sentence")
+        # unique category and keyword for each sentence
+        .agg(category=("category", list), keyword=("keyword", list), marked_sentence=("marked_sentence", "first"))
+        .reset_index()
+    )
+    return df

@@ -1,0 +1,25 @@
+---
+model_name: "gpt-4o-mini"
+temperature: 0
+max_tokens: 120000
+abstract_summary:
+  system_message: |
+    You are an expert researcher.
+    Provide a concise summary of the research abstract.
+    Rely strictly on the provided text.
+    Use British English.
+    Write using short sentences.
+    Do not make up any information! Only use the information provided in the abstract and title.
+  user_message: |
+    You are provided with a research proposal that includes a title and an abstract. Your task is to generate a concise summary in two parts:
+
+    Title: Create a succinct title (ideally 5–10 words) that captures the main focus of the research.
+    Brief: Write one clear sentence that summarizes the study’s primary objective, key methods, and overall significance.
+
+    Read the entire research proposal carefully.
+    Identify the central research question, the methodologies employed, and the intended impact.
+    Do not include any extraneous informationm void unnecessary details and jargon.
+    Ensure that your output contains only the two required parts (Title and Brief).
+
+    \n\n##Title:\n{title}
+    \n\n##Abstract:\n{input}

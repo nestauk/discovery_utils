@@ -44,6 +44,7 @@ class GtrGetter:
             self.data_version = self._get_latest_data_version()
         else:
             self.data_version = data_version
+        self._enriched_grants = None
         self._projects = None
         self._organisations = None
         self._persons = None
@@ -89,6 +90,43 @@ class GtrGetter:
             logger.error(f"Error fetching or processing folder names from S3: {str(e)}")
             raise
 
+    def _get_latest_enriched_file(self) -> str:
+        """Find the latest enriched data file in S3.
+
+        Returns:
+            str: Path to the latest enriched grants file
+
+        Raises:
+            ValueError: If no enriched grant files are found
+        """
+        try:
+            logger.info(f"Checking for latest enriched data in S3 bucket: {self.bucket}")
+            response = self.s3_client.list_objects_v2(Bucket=self.bucket, Prefix=f"{self.s3_prefix}enriched/")
+
+            # Extract all enriched grant files
+            files = []
+            date_pattern = re.compile(r"gtr_grants_(\d{8})\.parquet")
+
+            for obj in response.get("Contents", []):
+                filename = obj["Key"]
+                match = date_pattern.search(filename)
+                if match:
+                    date_str = match.group(1)
+                    date_obj = datetime.datetime.strptime(date_str, "%Y%m%d")
+                    files.append((filename, date_obj))
+
+            if not files:
+                raise ValueError("No enriched grant files found.")
+
+            # Sort by date and get the most recent
+            latest_file = sorted(files, key=lambda x: x[1], reverse=True)[0][0]
+            logger.info(f"Latest enriched file found: {latest_file}")
+            return latest_file
+
+        except Exception as e:
+            logger.error(f"Error fetching or processing enriched files from S3: {str(e)}")
+            raise
+
     def _get_table(self, key: str) -> pd.DataFrame:
         """Download parquet table from S3"""
         logger.info(f"Downloading parquet file: {key}")
@@ -116,6 +154,36 @@ class GtrGetter:
         """
         key = f"{S3_PREFIX}{self.data_version}/{table}.parquet"
         return self._get_table(key)
+
+    def _get_enriched_grants(self, version: str = None) -> pd.DataFrame:
+        """Get enriched grants data from S3
+
+        Args:
+            version (str, optional): Specific version to load (format: YYYYMMDD).
+                                   If None, loads the latest version.
+
+        Returns:
+            pd.DataFrame: Enriched grants data
+        """
+        try:
+            if version is None:
+                file_path = self._get_latest_enriched_file()
+            else:
+                file_path = f"{self.s3_prefix}enriched/gtr_grants_{version}.parquet"
+
+            logger.info(f"Loading enriched grants from: {file_path}")
+            return self._get_table(file_path)
+
+        except Exception as e:
+            logger.error(f"Error loading enriched grants: {str(e)}")
+            raise
+
+    @property
+    def latest_enriched_grants(self) -> pd.DataFrame:
+        """Get enriched grants data"""
+        if self._enriched_grants is None:
+            self._enriched_grants = self._get_enriched_grants()
+        return self._enriched_grants
 
     @property
     def projects(self) -> pd.DataFrame:
@@ -482,7 +550,7 @@ class GtrGetter:
             .assign(text=lambda df: df.text.apply(lambda x: re.sub(boilerplate_empty_text, "", x)))
             .drop(columns=text_fields)
         )
-    
+
     @property
     def vector_db(self) -> embeddings.LanceDBConnection:
         """Get the LanceDB connection"""

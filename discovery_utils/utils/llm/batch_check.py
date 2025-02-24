@@ -8,7 +8,6 @@ More info here: https://github.com/nestauk/discovery_utils/wiki/Checking-data-wi
 import asyncio
 import json
 import math
-import os
 
 from datetime import datetime
 from datetime import timezone
@@ -24,17 +23,20 @@ import pandas as pd
 import yaml
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
-from langfuse.callback import CallbackHandler
 from pydantic import BaseModel
 from pydantic import Field
 from pydantic import create_model
 
 from discovery_utils import logging
+from discovery_utils.utils.llm.llm_utils import get_langfuse_handler
+from discovery_utils.utils.llm.llm_utils import get_llm
 
 
 class LLMProcessor:
-    """Process text data using a language model and save the results to a JSONL file."""
+    """Process text data using a language model and save the results to a JSONL file.
+
+    The default behaviour of the class is to function as a relevance checker.
+    """
 
     def __init__(
         self,
@@ -45,21 +47,13 @@ class LLMProcessor:
         output_fields: Optional[List[Dict[str, str]]] = None,
         session_name: Optional[str] = None,
     ) -> None:
-        self.llm = ChatOpenAI(
-            openai_api_key=os.getenv("OPENAI_API_KEY"), model_name=model_name, temperature=temperature
-        )
+        self.llm = get_llm(model_name=model_name, temperature=temperature)
         if session_name is None:
             session_name = ""
         else:
             session_name = f"{session_name}_"
 
-        self.langfuse_handler = CallbackHandler(
-            user_id=os.environ.get("USER_EMAIL"),
-            session_id=f"{session_name}{datetime.today().isoformat()}",
-            secret_key=os.environ.get("LANGFUSE_SECRET_KEY"),
-            public_key=os.environ.get("LANGFUSE_PUBLIC_KEY"),
-            host=os.environ.get("LANGFUSE_HOST"),
-        )
+        self.langfuse_handler = get_langfuse_handler(session_id=f"{session_name}{datetime.today().isoformat()}")
         self.output_path = Path(output_path)
         self.model_name = model_name
         self.temperature = temperature
@@ -175,9 +169,11 @@ class LLMProcessor:
             asyncio.run(self.process_text_data(text_data, batch_size, sleep_time))
 
 
-def generate_system_message(config: Union[str, dict]) -> str:
+def generate_relevance_check_system_message(config: Union[str, dict]) -> str:
     """
-    Generate a system message using the provided configuration.
+    Generate a system message using a configuration that includes scope statements and keywords.
+
+    See example_relevance_check_config.yaml for an example configuration file.
 
     Args:
         config (dict or str): Configuration as a dictionary or file path to a YAML config.

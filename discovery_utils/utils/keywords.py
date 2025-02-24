@@ -225,7 +225,6 @@ def get_keyword_hits(speech: str, keywords_dict: dict) -> pd.DataFrame:
     hits_sentences = []
     hits_categories = []
     marked_sentences = []
-    # replace Hon. with Hon
     sents = split_sentences([speech], ids=[0])[0]
 
     # Fetch general filtering keywords

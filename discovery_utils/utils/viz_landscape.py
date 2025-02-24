@@ -42,6 +42,8 @@ MIN_CLUSTER_SIZE = 50
 
 N_KEYWORD_CLUSTERS = 35
 
+RANDOM_STATE = 42
+
 CUSTOM_STOPWORDS = ["httpswwwukriorgapplyforfundinghowwefundstudentships", "abstract", "gtr"]
 FULL_STOPWORDS = stopwords.words("english") + CUSTOM_STOPWORDS
 LEMMATIZER = WordNetLemmatizer()
@@ -52,16 +54,16 @@ def simple_tokenizer(text: str) -> List[str]:
     return text.split()
 
 
-def preproc(text: str) -> str:
+def preproc(text: str, list_of_stopwords: List[str] = FULL_STOPWORDS) -> str:
     """Preprocess text by removing non-alphabetic characters, lowercasing, lemmatising, and removing stopwords"""
     text = re.sub(r"[^a-zA-Z ]+", "", text).lower()
     text = text.split()
     text = [LEMMATIZER.lemmatize(t) for t in text]
-    text = [t for t in text if t not in FULL_STOPWORDS]
+    text = [t for t in text if t not in list_of_stopwords]
     return " ".join(text)
 
 
-def cluster_texts(documents: Iterator[str], cluster_labels: Iterator) -> Dict:
+def concat_texts_in_cluster(documents: Iterator[str], cluster_labels: Iterator) -> Dict:
     """
     Create a large text string for each cluster, by joining up the text strings (documents) belonging to the same cluster
 
@@ -84,7 +86,7 @@ def cluster_texts(documents: Iterator[str], cluster_labels: Iterator) -> Dict:
     return cluster_text_dict
 
 
-def cluster_keywords(
+def generate_cluster_keywords(
     documents: Iterator[str],
     cluster_labels: Iterator[int],
     n: int = 10,
@@ -118,7 +120,7 @@ def cluster_keywords(
     )
 
     # Create cluster text documents
-    cluster_documents = cluster_texts(documents, cluster_labels)
+    cluster_documents = concat_texts_in_cluster(documents, cluster_labels)
     unique_cluster_labels = list(cluster_documents.keys())
 
     # Apply the vectorizer
@@ -144,8 +146,10 @@ def generate_bertopic(
     vectors_df: pd.DataFrame,
     min_cluster_size: int = MIN_CLUSTER_SIZE,
     nr_topics: int = 10,
-    random_state: int = 42,
+    random_state: int = RANDOM_STATE,
     verbose: bool = False,
+    ngram_range: Tuple[int, int] = (1, 1),
+    cluster_selection_method: str = "leaf",
 ) -> Tuple[pd.DataFrame, BERTopic]:
     """Generate quick BERTopic representations
 
@@ -153,7 +157,11 @@ def generate_bertopic(
         vectors_df (pd.DataFrame): DataFrame with columns 'text' and 'vector'
         min_cluster_size (int, optional): Minimum cluster size. Defaults to MIN_CLUSTER_SIZE.
         nr_topics (int, optional): Constrained to number of topics to generate. Defaults to 10.
+            You can set it to None to let the HDBSCAN determine the number of topics.
         random_state (int, optional): Random seed. Defaults to 42.
+        verbose (bool, optional): Verbose mode. Defaults to False.
+        ngram_range (Tuple[int, int], optional): N-gram range for the vectorizer. Defaults to (1, 1).
+        cluster_selection_method (str, optional): Method to select clusters. Defaults to "leaf".
 
     Returns:
         pd.DataFrame: DataFrame with columns 'text', 'vector', 'topics', 'reduced_topics'
@@ -170,7 +178,7 @@ def generate_bertopic(
     custom_hdbscan = HDBSCAN(
         min_cluster_size=min_cluster_size,
         prediction_data=True,
-        cluster_selection_method="leaf",
+        cluster_selection_method=cluster_selection_method,
         metric="euclidean",
     )
 
@@ -180,7 +188,7 @@ def generate_bertopic(
 
     topic_model = BERTopic(
         min_topic_size=min_cluster_size,
-        n_gram_range=(1, 1),
+        n_gram_range=ngram_range,
         verbose=verbose,
         hdbscan_model=custom_hdbscan,
         ctfidf_model=ctfidf_model,
@@ -216,16 +224,19 @@ def generate_bertopic(
 def generate_landscape_keywords(
     viz_df: pd.DataFrame,
     n_keyword_clusters: int = N_KEYWORD_CLUSTERS,
-    random_state: int = 10,
+    random_state: int = RANDOM_STATE,
+    x_col: str = "umap_x",
+    y_col: str = "umap_y",
+    text_col: str = "text",
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Generate keywords for the landscape"""
     clusterer = KMeans(n_clusters=n_keyword_clusters, random_state=random_state)
-    clusterer.fit(viz_df[["umap_x", "umap_y"]])
+    clusterer.fit(viz_df[[x_col, y_col]])
     soft_clusters = list(clusterer.labels_)
 
-    title_texts = viz_df["text"].apply(preproc)
-    _cluster_texts = cluster_texts(title_texts, soft_clusters)
-    _cluster_keywords = cluster_keywords(
+    title_texts = viz_df[text_col].apply(preproc)
+    _cluster_texts = concat_texts_in_cluster(title_texts, soft_clusters)
+    _cluster_keywords = generate_cluster_keywords(
         documents=list(_cluster_texts.values()),
         cluster_labels=list(_cluster_texts.keys()),
         n=2,
@@ -264,11 +275,11 @@ def chart_keywords(centroids: pd.DataFrame) -> alt.Chart:
     )
 
 
-def generate_reduced_embeddings(vectors_df: pd.DataFrame) -> np.ndarray:
+def generate_reduced_embeddings(vectors_df: pd.DataFrame, random_state: int = RANDOM_STATE) -> np.ndarray:
     """Generate reduced embeddings for visualisation purposes"""
-    return UMAP(n_neighbors=15, n_components=2, min_dist=0.0, metric="cosine").fit_transform(
-        np.array(vectors_df["vector"].to_list())
-    )
+    return UMAP(
+        n_neighbors=15, n_components=2, min_dist=0.0, metric="cosine", random_state=random_state
+    ).fit_transform(np.array(vectors_df["vector"].to_list()))
 
 
 def create_viz_dataframe(
@@ -290,20 +301,21 @@ def create_viz_dataframe(
     ).merge(topic_model.get_topic_info(), left_on="reduced_topics", right_on="Topic", how="left")
 
 
-def generate_landscape_viz(
+def generate_landscape_viz_df(
     vectors_df: pd.DataFrame,
     min_cluster_size: int = MIN_CLUSTER_SIZE,
     nr_topics: int = 10,
-    random_state: int = 42,
+    random_state: int = RANDOM_STATE,
     verbose: bool = False,
     n_keyword_clusters: int = N_KEYWORD_CLUSTERS,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Generate the landscape visualisation
+    """Generate the data for landscape visualisation
 
     Args:
         vectors_df (pd.DataFrame): DataFrame with columns 'text' and 'vector'
         min_cluster_size (int, optional): Minimum cluster size. Defaults to MIN_CLUSTER_SIZE.
         nr_topics (int, optional): Number of topics to generate. Defaults to 10.
+            Can set it to None to let the HDBSCAN determine the number of topics.
         random_state (int, optional): Random seed. Defaults to 42.
 
     Returns:
@@ -316,7 +328,7 @@ def generate_landscape_viz(
         random_state=random_state,
         verbose=verbose,
     )
-    reduced_embeddings = generate_reduced_embeddings(_vectors_df)
+    reduced_embeddings = generate_reduced_embeddings(_vectors_df, random_state)
     viz_df = create_viz_dataframe(_vectors_df, reduced_embeddings, topic_model)
     viz_df, centroids_df = generate_landscape_keywords(viz_df, n_keyword_clusters=n_keyword_clusters)
     return viz_df.drop(["vector", "Topic", "Representation"], axis=1), centroids_df
@@ -437,12 +449,12 @@ def generate_crunchbase_landscape(
     CB: CrunchbaseGetter,
     min_cluster_size: int = MIN_CLUSTER_SIZE,
     nr_topics: int = 10,
-    random_state: int = 42,
+    random_state: int = RANDOM_STATE,
     verbose: bool = False,
     n_keyword_clusters: int = N_KEYWORD_CLUSTERS,
 ) -> Tuple[alt.Chart, pd.DataFrame]:
     """Generate the Crunchbase landscape visualisation"""
-    viz_df, centroids_df = generate_landscape_viz(
+    viz_df, centroids_df = generate_landscape_viz_df(
         vectors_df,
         min_cluster_size=min_cluster_size,
         nr_topics=nr_topics,
@@ -525,12 +537,12 @@ def generate_gtr_landscape(
     GTR: GtrGetter,
     min_cluster_size: int = MIN_CLUSTER_SIZE,
     nr_topics: int = 10,
-    random_state: int = 42,
+    random_state: int = RANDOM_STATE,
     verbose: bool = False,
     n_keyword_clusters: int = N_KEYWORD_CLUSTERS,
 ) -> Tuple[alt.Chart, pd.DataFrame]:
     """Generate the Crunchbase landscape visualisation"""
-    viz_df, centroids_df = generate_landscape_viz(
+    viz_df, centroids_df = generate_landscape_viz_df(
         vectors_df,
         min_cluster_size=min_cluster_size,
         nr_topics=nr_topics,

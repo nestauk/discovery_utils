@@ -71,6 +71,10 @@ class CrunchbaseGetter:
         self._embedding_model = None
         self._category_vectors = None
         self._group_vectors = None
+        self._latest_grants = None
+        self._latest_funding_rounds = None
+        self._latest_startups = None
+        self._latest_smart_money_investors = None
         # Vector DB
         self.VectorDB = embeddings.VectorDB(
             db_path=vector_db_path,
@@ -144,6 +148,26 @@ class CrunchbaseGetter:
     def _get_enriched_funding_rounds(self) -> pd.DataFrame:
         """Get enriched funding rounds data"""
         key = f"{S3_PREFIX}enriched/funding_rounds_full.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_grants(self) -> pd.DataFrame:
+        """Get the latest Crunchbase grants data"""
+        key = f"{S3_PREFIX}enriched/grants_new_only.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_funding_rounds(self) -> pd.DataFrame:
+        """Get the latest Crunchbase funding rounds data"""
+        key = f"{S3_PREFIX}enriched/funding_rounds_for_slack.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_startups(self) -> pd.DataFrame:
+        """Get the latest Crunchbase startups data"""
+        key = f"{S3_PREFIX}enriched/orgs_for_slack.parquet"
+        return self._get_table(key)
+
+    def _get_enriched_latest_smart_money_investors(self) -> pd.DataFrame:
+        """Get the latest Crunchbase smart money investors data"""
+        key = f"{S3_PREFIX}enriched/smart_money_for_slack.parquet"
         return self._get_table(key)
 
     @property
@@ -266,6 +290,39 @@ class CrunchbaseGetter:
         return self._degrees
 
     @property
+    def latest_grants(self) -> pd.DataFrame:
+        """Get the latest Crunchbase grants data"""
+        if self._latest_grants is None:
+            self._latest_grants = self._get_enriched_latest_grants()
+        return self._latest_grants
+
+    @property
+    def latest_funding_rounds(self) -> pd.DataFrame:
+        """Get the latest Crunchbase funding rounds data
+
+        Note that that there is a row for each unique company and investor pair.
+        This means that one funding round will be represented by multiple rows.
+        When aggregating funding data, need to deduplicate by funding_round_id column.
+        """
+        if self._latest_funding_rounds is None:
+            self._latest_funding_rounds = self._get_enriched_latest_funding_rounds()
+        return self._latest_funding_rounds
+
+    @property
+    def latest_startups(self) -> pd.DataFrame:
+        """Get the latest Crunchbase startups data"""
+        if self._latest_startups is None:
+            self._latest_startups = self._get_enriched_latest_startups()
+        return self._latest_startups
+
+    @property
+    def latest_smart_money_investors(self) -> pd.DataFrame:
+        """Get the latest Crunchbase smart money investors data"""
+        if self._latest_smart_money_investors is None:
+            self._latest_smart_money_investors = self._get_enriched_latest_smart_money_investors()
+        return self._latest_smart_money_investors
+
+    @property
     def unique_funding_round_types(self) -> List[str]:
         """Get unique funding round types"""
         return list(sorted(self.funding_rounds_enriched.investment_type.unique().tolist()))
@@ -294,9 +351,15 @@ class CrunchbaseGetter:
         """Get the mapping between Crunchbase organisations and Nesta categories"""
         if self._organisation_nesta_categories is None:
             self._organisation_nesta_categories = (
-                self.organisations_enriched[['id', 'mission_labels', 'topic_labels']]
-                .assign(mission_labels = lambda df: df.mission_labels.apply(lambda x: x.split(",") if (type(x) is str) else []))
-                .assign(topic_labels = lambda df: df.topic_labels.apply(lambda x: x.split(",") if (type(x) is str) else []))
+                self.organisations_enriched[["id", "mission_labels", "topic_labels"]]
+                .assign(
+                    mission_labels=lambda df: df.mission_labels.apply(
+                        lambda x: x.split(",") if (type(x) is str) else []
+                    )
+                )
+                .assign(
+                    topic_labels=lambda df: df.topic_labels.apply(lambda x: x.split(",") if (type(x) is str) else [])
+                )
             )
         return self._organisation_nesta_categories
 
@@ -405,24 +468,18 @@ class CrunchbaseGetter:
             raise ValueError(f"category_type must be one of ['narrow', 'broad'], not {category_type}.")
         return self.organisations_enriched.query("id in @matching_ids").drop_duplicates(subset="id")
 
-    
     def get_companies_in_nesta_categories(
-            self, 
-            category_type: Literal["mission_labels", "topic_labels"],
-            categories: List[str], 
-        ) -> pd.DataFrame:
+        self,
+        category_type: Literal["mission_labels", "topic_labels"],
+        categories: List[str],
+    ) -> pd.DataFrame:
         """Get all companies belonging to the provided categories"""
-        matching_ids = (
-            self.organisation_nesta_categories
-            .explode(category_type)
+        matching_ids = (  # noqa
+            self.organisation_nesta_categories.explode(category_type)
             .query(f"{category_type} in @categories")
             .id.to_list()
         )
-        return (
-            self.organisations_enriched
-            .query("id in @matching_ids")
-            .drop_duplicates(subset="id")
-        )
+        return self.organisations_enriched.query("id in @matching_ids").drop_duplicates(subset="id")
 
     def select_funding_rounds(
         self,
@@ -670,49 +727,30 @@ REGION_TO_COUNTRIES = {
 }
 
 INVESTMENT_STAGES = {
-    'early_stage': [
-        'pre_seed',
-        'seed',
-        'angel',
-        'series_a',
-        'series_b',
-        'convertible_note',
-        'equity_crowdfunding',
-        'product_crowdfunding',
-        'grant',
-        'non_equity_assistance',
-        'initial_coin_offering'
+    "early_stage": [
+        "pre_seed",
+        "seed",
+        "angel",
+        "series_a",
+        "series_b",
+        "convertible_note",
+        "equity_crowdfunding",
+        "product_crowdfunding",
+        "grant",
+        "non_equity_assistance",
+        "initial_coin_offering",
     ],
-    'growth_stage': [
-        'series_c',
-        'series_d',
-        'series_e',
-        'series_f',
-        'series_g',
-        'series_h',
-        'series_i',
-        'series_j'
-    ],
-    'late_stage': [
-        'private_equity',
-        'post_ipo_equity',
-        'post_ipo_debt',
-        'post_ipo_secondary',
-        'secondary_market'
-    ],
-    'other': [
-        'corporate_round',
-        'debt_financing'
-    ],
-    'uncategorized': [
-        'series_unknown',
-        'undisclosed'
-    ]
+    "growth_stage": ["series_c", "series_d", "series_e", "series_f", "series_g", "series_h", "series_i", "series_j"],
+    "late_stage": ["private_equity", "post_ipo_equity", "post_ipo_debt", "post_ipo_secondary", "secondary_market"],
+    "other": ["corporate_round", "debt_financing"],
+    "uncategorized": ["series_unknown", "undisclosed"],
 }
+
 
 def country_to_region() -> Dict[str, str]:
     """Get the mapping from countries to regions."""
     return remap_dict(REGION_TO_COUNTRIES)
+
 
 def investment_type_to_stage() -> dict:
     """Get the mapping from investments to stages"""

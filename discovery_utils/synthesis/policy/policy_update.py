@@ -48,7 +48,7 @@ load_dotenv()
 DEBATE_URL = "https://www.theyworkforyou.com/debates/?id="
 MISSIONS = ["ASF", "AFS", "AHL"]
 
-SLACK_URL = os.environ["SLACK_WEBHOOK_URL_TESTING"]
+SLACK_URL = os.environ["SLACK_WEBHOOK_URL_DISCOVERY"]
 
 
 class HansardData:

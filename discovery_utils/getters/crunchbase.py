@@ -557,25 +557,30 @@ class CrunchbaseGetter:
             .head(n_results)
         )
 
-    # def get_organisation_text(self) -> pd.DataFrame:
-    #     """Get full available text data for projects"""
-    #     text_fields = self._default_text_fields
-    #     boilerplate_empty_text = "Abstracts are not currently available in GtR for all funded research. \
-    #         This is normally because the abstract was not required at the time of proposal submission, \
-    #         but may be because it included sensitive information such as personal details"
+    def get_organisation_text(self, orgs_df: pd.DataFrame) -> pd.DataFrame:
+        """Get the full text descriptions for organisations
 
-    #     columns = ["id"] + text_fields
+        The full text includes the name, short description, and long description.
 
-    #     return (
-    #         self.projects[columns]
-    #         .copy()
-    #         .fillna("")
-    #         .astype({field: str for field in text_fields})
-    #         .assign(text=lambda df: df[text_fields].apply(lambda x: " ".join(x), axis=1))
-    #         .assign(text=lambda df: df.text.str.strip())
-    #         .assign(text=lambda df: df.text.apply(lambda x: re.sub(boilerplate_empty_text, "", x)))
-    #         .drop(columns=text_fields)
-    #     )
+        Args:
+            orgs_df (pd.DataFrame): DataFrame containing organisation ids in "id" column
+
+        Returns:
+            pd.DataFrame: DataFrame containing organisation ids and full text descriptions in "text" column
+        """
+        text_columns = ["name", "short_description"]
+        text_fields = text_columns + ["description"]
+        return (
+            self.organisations_enriched[["id"] + text_columns]
+            .query("id in @orgs_df.id.to_list()")
+            .merge(self.descriptions[["id", "description"]], on="id")
+            .copy()
+            .fillna("")
+            .astype({field: str for field in text_fields})
+            .assign(text=lambda df: df[text_fields].apply(lambda x: " ".join(x), axis=1))
+            .assign(text=lambda df: df.text.str.strip())
+            .drop(columns=text_fields)
+        )
 
     @property
     def vector_db(self) -> embeddings.LanceDBConnection:

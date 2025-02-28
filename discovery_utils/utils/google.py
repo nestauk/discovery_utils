@@ -8,8 +8,6 @@ import discovery_child_development.utils.google_utils as google_utils
 data = google_utils.access_google_sheet(<sheet_id>, <sheet_name>)
 """
 
-import os
-
 from os import environ
 from os import path
 from pathlib import PosixPath
@@ -21,8 +19,6 @@ import gspread_formatting as gsf
 from df2gspread import df2gspread as d2g
 from df2gspread import gspread2df as g2d
 from googleapiclient.discovery import Resource
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload
 from gspread.exceptions import WorksheetNotFound
 from oauth2client.service_account import ServiceAccountCredentials
 from pandas import DataFrame
@@ -74,36 +70,6 @@ def find_credentials(credentials_env_var: str) -> PosixPath:
             raise Exception(f"Error downloading credentials from S3: {e}")
 
     return credentials_json
-
-
-# Google Drive
-
-
-def get_drive_service() -> Resource:
-    """Initialise Google Drive API service."""
-    credentials = load_gsheet_credentials()
-    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
-    return service
-
-
-def upload_image_to_drive(service: Resource, file_path: str) -> tuple[str, str]:
-    """Upload a file to Google Drive and makes it public."""
-
-    file_metadata = {"name": os.path.basename(file_path), "mimeType": "image/png"}
-    media = MediaFileUpload(file_path, mimetype="image/png")
-
-    uploaded_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-
-    # Make the file publicly accessible
-    service.permissions().create(fileId=uploaded_file["id"], body={"role": "reader", "type": "anyone"}).execute()
-
-    # Get the public URL
-    file_id = uploaded_file["id"]
-    image_url = f"https://drive.google.com/uc?id={file_id}"
-
-    logging.info(f"Uploaded image available at: {image_url}")
-
-    return file_id, image_url
 
 
 def delete_file_from_drive(service: Resource, file_id: str) -> None:

@@ -1,12 +1,47 @@
 """Google Slides API utils"""
 
+import os
+
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+
+from discovery_utils import logging
 from discovery_utils.utils.google import Resource
 from discovery_utils.utils.google import ServiceAccountCredentials
-from discovery_utils.utils.google import build
 from discovery_utils.utils.google import find_credentials
 
 
 EMU_in_CM = 360_000
+
+
+# Google Drive
+
+
+def get_drive_service() -> Resource:
+    """Initialise Google Drive API service."""
+    credentials = get_gslides_credentials()
+    service = build("drive", "v3", credentials=credentials, cache_discovery=False)
+    return service
+
+
+def upload_image_to_drive(service: Resource, file_path: str) -> tuple[str, str]:
+    """Upload a file to Google Drive and makes it public."""
+
+    file_metadata = {"name": os.path.basename(file_path), "mimeType": "image/png"}
+    media = MediaFileUpload(file_path, mimetype="image/png")
+
+    uploaded_file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+
+    # Make the file publicly accessible
+    service.permissions().create(fileId=uploaded_file["id"], body={"role": "reader", "type": "anyone"}).execute()
+
+    # Get the public URL
+    file_id = uploaded_file["id"]
+    image_url = f"https://drive.google.com/uc?id={file_id}"
+
+    logging.info(f"Uploaded image available at: {image_url}")
+
+    return file_id, image_url
 
 
 def get_gslides_credentials():  # noqa

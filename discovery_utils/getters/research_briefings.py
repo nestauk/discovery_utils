@@ -1,9 +1,9 @@
 """
 UK Parliament Research Briefings Getter
 
-This script downloads research briefings data from the UK Parliament API.
-It provides functionality to retrieve briefings, filter by date range, and
-save the JSON response data.
+This script downloads research briefings data from the UK Parliament API,
+including both the JSON metadata and PDF documents. It stores the metadata in
+a DataFrame and downloads PDFs as separate files.
 """
 
 import glob
@@ -23,9 +23,8 @@ from typing import Optional
 from typing import Set
 from typing import Union
 
+import pandas as pd
 import requests
-
-from discovery_utils.getters.research_briefings_pdf import download_pdfs_for_briefings
 
 
 # Set up logging
@@ -45,7 +44,12 @@ class ResearchBriefingsAPI:
         self.base_url = base_url
         self.session = requests.Session()
         # Set a user agent to be polite
-        self.session.headers.update({"User-Agent": "ResearchBriefingsDownloader/1.0", "Accept": "application/json"})
+        self.session.headers.update(
+            {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "Accept": "application/json",
+            }
+        )
         # Set default timeout for all requests
         self.timeout = 30  # 30 second timeout
 
@@ -79,7 +83,6 @@ class ResearchBriefingsAPI:
         url = f"{self.base_url}/researchbriefings"
         params = {"_page": page, "_pageSize": min(page_size, 500)}  # API has a 500 result limit per page
 
-        # Add date range filters if provided
         if start_date:
             params["min-date"] = start_date.isoformat()
         if end_date:
@@ -151,8 +154,7 @@ class ResearchBriefingsAPI:
                 items = response["result"]["items"]
                 all_briefings.extend(items)
 
-                # Update pagination info
-                if page == 0:  # First page
+                if page == 0:
                     if "itemsPerPage" in response["result"]:
                         page_size = response["result"]["itemsPerPage"]
                     if "totalResults" in response["result"]:
@@ -163,11 +165,9 @@ class ResearchBriefingsAPI:
                 logger.warning("Unexpected response format")
                 break
 
-            # Move to next page
             page += 1
             logger.info(f"Fetched page {page} of {total_pages}")
 
-            # Be nice to the API
             if page < total_pages:
                 time.sleep(0.5)
 
@@ -185,12 +185,10 @@ class ResearchBriefingsAPI:
         """
         url = f"{self.base_url}/researchbriefings/{briefing_id}"
         try:
-            # Set a timeout to prevent indefinite waiting
             response = self.session.get(f"{url}.json", timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
 
-            # Log the URL from the result field
             if "result" in data and "_about" in data["result"]:
                 logger.info(f"Found briefing URL: {data['result']['_about']}")
 
@@ -203,38 +201,6 @@ class ResearchBriefingsAPI:
             return {"error": "ConnectionError"}
         except requests.exceptions.RequestException as e:
             logger.error(f"Error retrieving briefing {briefing_id}: {e}")
-            return {"error": str(e)}
-
-    def get_topics(self) -> Dict:
-        """
-        Get all available research briefing topics.
-
-        Returns:
-            Dictionary containing topic data
-        """
-        url = f"{self.base_url}/researchbriefingtopics"
-        try:
-            response = self.session.get(f"{url}.json", timeout=self.timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error retrieving topics: {e}")
-            return {"error": str(e)}
-
-    def get_types(self) -> Dict:
-        """
-        Get all available research briefing types.
-
-        Returns:
-            Dictionary containing briefing type data
-        """
-        url = f"{self.base_url}/researchbriefingtypes"
-        try:
-            response = self.session.get(f"{url}.json", timeout=self.timeout)
-            response.raise_for_status()
-            return response.json()
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error retrieving briefing types: {e}")
             return {"error": str(e)}
 
 
@@ -255,7 +221,7 @@ def extract_briefing_id_from_url(url: str) -> str:
     # Different formats to try
     patterns = [
         r"resources/(\d+)",  # For URLs like 'http://data.parliament.uk/resources/12345'
-        r"researchbriefings/(\d+)",  # For URLs like 'http://eldaddp.azurewebsites.net/researchbriefings/12345'
+        # r'researchbriefings/(\d+)',  # For URLs like 'http://eldaddp.azurewebsites.net/researchbriefings/12345'
         r"/([^/]+)$",  # Last segment of the URL as a fallback
     ]
 
@@ -286,76 +252,172 @@ def extract_nested_value(data: Dict, path: List[str], default=None) -> Any:
             current = current[key]
         else:
             return default
+
+    # If the value is a dictionary with "_value" key, extract that value
+    if isinstance(current, dict) and "_value" in current:
+        return current["_value"]
+
     return current
 
 
-def extract_field_value(data: Any) -> Any:
+def clean_filename(filename: str) -> str:
+    """Make a string safe for use as a filename."""
+    # Replace invalid characters
+    invalid_chars = '<>:"/\\|?*'
+    for char in invalid_chars:
+        filename = filename.replace(char, "_")
+
+    filename = re.sub(r"[^\w\-\.]", "_", filename)
+
+    # Truncate if too long
+    max_length = 200
+    if len(filename) > max_length:
+        filename = filename[:max_length]
+
+    return filename
+
+
+def get_existing_briefing_ids(output_dir: str) -> Set[str]:
     """
-    Extract the actual value from a field which might be wrapped in API-specific structures.
+    Check if a metadata CSV exists and extract briefing IDs from it.
 
     Args:
-        data: The field value to extract from
+        output_dir: Directory to check for existing metadata CSV
 
     Returns:
-        The extracted actual value
+        Set of briefing IDs that have already been downloaded
     """
-    # Handle different data types and structures
-    if data is None:
-        return None
+    existing_ids = set()
 
-    # If it's a list, process the first item
-    if isinstance(data, list):
-        if not data:
-            return None
-        return extract_field_value(data[0])
+    # Look for metadata CSV files
+    csv_files = glob.glob(os.path.join(output_dir, "research_briefings_*.csv"))
 
-    # If it's a dictionary with _value key, extract that
-    if isinstance(data, dict):
-        if "_value" in data:
-            return data["_value"]
-        # For resource objects, try to get label or prefLabel
-        if "label" in data:
-            return extract_field_value(data["label"])
-        if "prefLabel" in data:
-            return extract_field_value(data["prefLabel"])
+    if not csv_files:
+        logger.info(f"No existing metadata CSV found in {output_dir}")
+        return existing_ids
 
-    # Otherwise return the data as is
-    return data
+    # Use the most recent CSV file
+    latest_csv = max(csv_files, key=os.path.getmtime)
+    logger.info(f"Found existing metadata CSV: {latest_csv}")
+
+    try:
+        df = pd.read_csv(latest_csv)
+
+        if "id" in df.columns:
+            existing_ids = set(df["id"].dropna().astype(str))
+            logger.info(f"Found {len(existing_ids)} existing briefing IDs in {latest_csv}")
+    except Exception as e:
+        logger.warning(f"Error processing existing CSV file {latest_csv}: {e}")
+
+    # Also check PDFs directory to find additional IDs
+    pdf_dir = os.path.join(output_dir, "pdfs")
+    if os.path.exists(pdf_dir):
+        pdf_files = glob.glob(os.path.join(pdf_dir, "*.pdf"))
+        logger.info(f"Found {len(pdf_files)} PDF files in {pdf_dir}")
+
+        for pdf_file in pdf_files:
+            # Extract ID from filename
+            pdf_basename = os.path.basename(pdf_file)
+            pdf_id = os.path.splitext(pdf_basename)[0]
+            existing_ids.add(pdf_id)
+
+    logger.info(f"Total {len(existing_ids)} existing briefing IDs found")
+    return existing_ids
 
 
-def extract_briefing_metadata(briefing_data: Dict) -> Dict:
+def download_pdf_for_briefing(pdf_url: str, pdf_path: str, max_attempts: int = 3) -> bool:
     """
-    Extract metadata from a briefing response.
+    Download a PDF document with retry mechanism.
 
     Args:
-        briefing_data: The raw API response for a briefing
+        pdf_url: URL of the PDF to download
+        pdf_path: Path where the PDF should be saved
+        max_attempts: Maximum number of download attempts
 
     Returns:
-        Dictionary with extracted metadata
+        True if download was successful, False otherwise
     """
-    # Navigate to the primary topic
-    primary_topic = extract_nested_value(briefing_data, ["result", "primaryTopic"], {})
+    success = False
 
-    # Extract the about URL
-    about_url = extract_nested_value(briefing_data, ["result", "_about"], "")
+    for attempt in range(max_attempts):
+        try:
+            logger.info(f"Downloading PDF from {pdf_url}")
 
-    # Get the briefing ID from the URL
-    briefing_id = extract_briefing_id_from_url(about_url)
+            # Set headers to mimic a browser
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+            }
 
-    # Base metadata
+            # Set a timeout and use headers to prevent 403 errors
+            response = requests.get(pdf_url, headers=headers, timeout=30)
+            response.raise_for_status()
+
+            # Check if the response is actually a PDF
+            content_type = response.headers.get("Content-Type", "")
+            if "application/pdf" not in content_type and not pdf_url.endswith(".pdf"):
+                logger.warning(f"Response may not be a PDF (Content-Type: {content_type}). Checking file...")
+                # Check first few bytes for PDF signature
+                if not response.content.startswith(b"%PDF"):
+                    logger.warning(f"Downloaded file does not appear to be a valid PDF")
+
+            # Save the PDF
+            with open(pdf_path, "wb") as f:
+                f.write(response.content)
+
+            logger.info(f"Successfully downloaded PDF to {pdf_path}")
+            success = True
+            break
+
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Attempt {attempt+1}/{max_attempts} failed: {str(e)}")
+            if attempt < max_attempts - 1:
+                # Exponential backoff
+                wait_time = 2**attempt
+                logger.info(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+
+    return success
+
+
+def extract_briefing_metadata(full_briefing: Dict) -> Dict:
+    """
+    Extract metadata fields from a briefing JSON response.
+
+    Args:
+        full_briefing: The complete briefing data from the API
+
+    Returns:
+        Dictionary of extracted metadata fields
+    """
+    # Get primary topic
+    primary_topic = full_briefing.get("result", {}).get("primaryTopic", {})
+
+    # Extract basic fields
     metadata = {
-        "id": briefing_id,
-        "url": about_url,
-        "title": extract_field_value(primary_topic.get("title")),
-        "identifier": extract_field_value(primary_topic.get("identifier")),
-        "abstract": extract_field_value(primary_topic.get("abstract")),
-        "description": extract_field_value(primary_topic.get("description")),
-        "htmlsummary": primary_topic.get("htmlsummary"),
-        "date": extract_field_value(primary_topic.get("date")),
-        "modified": extract_field_value(primary_topic.get("modified")),
-        "status": primary_topic.get("status"),
-        "published": extract_field_value(primary_topic.get("published")),
+        "id": extract_briefing_id_from_url(primary_topic.get("_about", "")),
+        "url": primary_topic.get("_about", ""),
+        "title": extract_nested_value(primary_topic, ["title"], ""),
+        "identifier": extract_nested_value(primary_topic, ["identifier"], ""),
+        "abstract": extract_nested_value(primary_topic, ["abstract"], ""),
+        "date": extract_nested_value(primary_topic, ["date"], ""),
+        "modified": extract_nested_value(primary_topic, ["modified"], ""),
+        "type": extract_nested_value(primary_topic, ["type"], ""),
+        "subType": extract_nested_value(primary_topic, ["subType"], ""),
+        "status": primary_topic.get("status", ""),
+        "published": extract_nested_value(primary_topic, ["published"], ""),
+        "description": extract_nested_value(primary_topic, ["description"], ""),
+        "htmlsummary": primary_topic.get("htmlsummary", ""),
     }
+
+    # Extract PDF URL
+    pdf_url = extract_nested_value(primary_topic, ["contentLocation"], "")
+    if not pdf_url:
+        pdf_url = extract_nested_value(primary_topic, ["briefingDocument", "fileUrl"], "")
+    metadata["pdf_url"] = pdf_url
 
     # Extract topics
     topics = []
@@ -363,297 +425,191 @@ def extract_briefing_metadata(briefing_data: Dict) -> Dict:
         topic_data = primary_topic["topic"]
         if isinstance(topic_data, list):
             for topic in topic_data:
-                topic_name = extract_field_value(topic)
+                topic_name = extract_nested_value(topic, ["prefLabel"], "")
                 if topic_name:
                     topics.append(topic_name)
         else:
-            topic_name = extract_field_value(topic_data)
+            topic_name = extract_nested_value(topic_data, ["prefLabel"], "")
             if topic_name:
                 topics.append(topic_name)
-
-    metadata["topics"] = topics
-
-    # Extract type
-    if "type" in primary_topic:
-        metadata["type"] = extract_field_value(primary_topic["type"])
-    if "subType" in primary_topic:
-        metadata["subType"] = extract_field_value(primary_topic["subType"])
+    metadata["topics"] = ", ".join(topics)
 
     # Extract creator information
     if "creator" in primary_topic:
         creator = primary_topic["creator"]
-        # Handle creator being a list or a dictionary
-        if isinstance(creator, list):
-            # Use the first creator if there are multiple
-            if creator:
-                creator_item = creator[0]
-                creator_info = {
-                    "name": extract_field_value(
-                        creator_item.get("fullName") if isinstance(creator_item, dict) else None
-                    ),
-                    "givenName": extract_field_value(
-                        creator_item.get("givenName") if isinstance(creator_item, dict) else None
-                    ),
-                    "familyName": extract_field_value(
-                        creator_item.get("familyName") if isinstance(creator_item, dict) else None
-                    ),
-                }
-                metadata["creator"] = creator_info
+        if isinstance(creator, list) and creator:
+            creator_item = creator[0]
+            metadata["creator_given_name"] = extract_nested_value(creator_item, ["givenName"], "")
+            metadata["creator_family_name"] = extract_nested_value(creator_item, ["familyName"], "")
+            metadata["creator_name"] = extract_nested_value(creator_item, ["fullName"], "")
         elif isinstance(creator, dict):
-            creator_info = {
-                "name": extract_field_value(creator.get("fullName")),
-                "givenName": extract_field_value(creator.get("givenName")),
-                "familyName": extract_field_value(creator.get("familyName")),
-            }
-            metadata["creator"] = creator_info
+            metadata["creator_given_name"] = extract_nested_value(creator, ["givenName"], "")
+            metadata["creator_family_name"] = extract_nested_value(creator, ["familyName"], "")
+            metadata["creator_name"] = extract_nested_value(creator, ["fullName"], "")
 
     return metadata
 
 
-def get_existing_briefing_ids(output_dir: str) -> Set[str]:
+def process_briefings_batch(
+    api: ResearchBriefingsAPI,
+    briefings_batch: List[Dict],
+    pdf_dir: str,
+    existing_ids: Set[str],
+    checkpoint_file: str,
+    skip_pdf_download: bool = False,
+    batch_index: int = 0,
+    total_batches: int = 1,
+) -> pd.DataFrame:
     """
-    Scan the output directory for existing JSON files and extract briefing IDs.
-
-    Args:
-        output_dir: Directory to scan for existing briefings
-
-    Returns:
-        Set of briefing IDs that have already been downloaded
-    """
-    existing_ids = set()
-
-    # Find all JSON files in the output directory
-    json_files = glob.glob(os.path.join(output_dir, "*.json"))
-    logger.info(f"Found {len(json_files)} JSON files in {output_dir}")
-
-    # Count for progress reporting
-    processed_files = 0
-    total_files = len(json_files)
-
-    for json_file in json_files:
-        processed_files += 1
-
-        # Log progress periodically
-        if processed_files % 100 == 0 or processed_files == total_files:
-            logger.info(
-                f"Scanning existing files: {processed_files}/{total_files} ({processed_files/total_files*100:.1f}%)"
-            )
-
-        # Skip metadata and checkpoint files
-        if any(skip_term in os.path.basename(json_file) for skip_term in ["metadata", "checkpoint", "raw_briefings"]):
-            continue
-
-        try:
-            # Read the JSON file
-            with open(json_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            # Extract the _about URL from the primaryTopic
-            about_url = extract_nested_value(data, ["result", "primaryTopic", "_about"])
-
-            if about_url:
-                # Extract the ID from the URL
-                briefing_id = extract_briefing_id_from_url(about_url)
-                if briefing_id:
-                    existing_ids.add(briefing_id)
-
-        except Exception as e:
-            logger.warning(f"Error processing existing file {json_file}: {e}")
-
-    logger.info(f"Found {len(existing_ids)} existing briefing IDs in {output_dir}")
-    return existing_ids
-
-
-def find_existing_file_for_briefing(briefing_id: str, output_dir: str) -> Optional[str]:
-    """
-    Find the existing JSON file for a briefing ID.
-
-    Args:
-        briefing_id: The briefing ID to find
-        output_dir: Directory to search in
-
-    Returns:
-        Path to the existing file or None if not found
-    """
-    # Find all JSON files in the output directory
-    json_files = glob.glob(os.path.join(output_dir, "*.json"))
-
-    for json_file in json_files:
-        # Skip metadata and checkpoint files
-        if any(skip_term in os.path.basename(json_file) for skip_term in ["metadata", "checkpoint", "raw_briefings"]):
-            continue
-
-        try:
-            # Read the JSON file
-            with open(json_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            # Extract the _about URL from the primaryTopic
-            about_url = extract_nested_value(data, ["result", "primaryTopic", "_about"])
-
-            if about_url:
-                # Extract the ID from the URL
-                file_briefing_id = extract_briefing_id_from_url(about_url)
-                if file_briefing_id == briefing_id:
-                    return json_file
-
-        except Exception as e:
-            logger.debug(f"Error checking file {json_file} for briefing ID {briefing_id}: {e}")
-
-    return None
-
-
-def process_briefings(api: ResearchBriefingsAPI, briefings: List[Dict], output_dir: str) -> List[Dict]:
-    """
-    Process each briefing and save the JSON data.
+    Process a batch of briefings: extract metadata to DataFrame and download PDFs.
 
     Args:
         api: The API client
-        briefings: List of briefings metadata
-        output_dir: Directory to save the JSON files
+        briefings_batch: List of briefings metadata in the current batch
+        pdf_dir: Directory to save the PDF files
+        existing_ids: Set of already downloaded briefing IDs
+        checkpoint_file: Path to save checkpoint data
+        skip_pdf_download: Whether to skip downloading PDFs
+        batch_index: Index of the current batch
+        total_batches: Total number of batches
 
     Returns:
-        List of briefings with updated metadata
+        DataFrame with briefing metadata
     """
-    # Get existing briefing IDs
-    existing_ids = get_existing_briefing_ids(output_dir)
+    # List to collect row data for the DataFrame
+    rows_data = []
 
-    processed_briefings = []
-    total_briefings = len(briefings)
+    logger.info(f"Processing batch {batch_index+1}/{total_batches} with {len(briefings_batch)} briefings")
 
-    for i, briefing in enumerate(briefings):
-        logger.info(f"Processing briefing {i+1}/{total_briefings} ({(i+1)/total_briefings*100:.1f}%)")
+    # Track statistics
+    stats = {
+        "total_in_batch": len(briefings_batch),
+        "metadata_extracted": 0,
+        "already_exist": 0,
+        "api_errors": 0,
+        "pdfs_downloaded": 0,
+        "pdfs_already_exist": 0,
+        "pdfs_failed": 0,
+        "pdfs_no_url": 0,
+    }
 
-        # Extract metadata from the briefing data
-        # First try if this is already a full briefing response
-        if "result" in briefing and "primaryTopic" in briefing["result"]:
-            metadata = extract_briefing_metadata(briefing)
-            full_briefing = briefing
+    for i, briefing in enumerate(briefings_batch):
+        logger.info(f"Processing briefing {i+1}/{len(briefings_batch)} in batch {batch_index+1}/{total_batches}")
 
-            # Get the ID from the _about URL
-            about_url = extract_nested_value(briefing, ["result", "primaryTopic", "_about"], "")
-            briefing_id = extract_briefing_id_from_url(about_url) if about_url else None
-        else:
-            # Otherwise try to extract the briefing ID
-            briefing_id = None
+        # Extract briefing ID
+        briefing_id = None
 
-            # Check for _about URL in various formats
-            if "_about" in briefing:
-                about_url = briefing["_about"]
-                briefing_id = extract_briefing_id_from_url(about_url)
+        # Check for _about URL in various formats
+        if "_about" in briefing:
+            about_url = briefing["_about"]
+            briefing_id = extract_briefing_id_from_url(about_url)
 
-            # If we don't have an ID yet, check for an ID field
-            if not briefing_id and "id" in briefing:
-                briefing_id = briefing["id"]
+        if not briefing_id and "id" in briefing:
+            briefing_id = briefing["id"]
 
-            if not briefing_id:
-                logger.warning(f"Couldn't extract briefing ID from item {i+1}")
-                continue
+        if not briefing_id:
+            logger.warning(f"Couldn't extract briefing ID from item {i+1}")
+            stats["api_errors"] += 1
+            continue
 
-            # Check if this briefing has already been downloaded
-            if briefing_id in existing_ids:
-                logger.info(f"Briefing {briefing_id} already downloaded, checking existing file...")
+        # Check if this briefing has already been downloaded
+        if briefing_id in existing_ids:
+            logger.info(f"Briefing {briefing_id} already processed, skipping")
+            stats["already_exist"] += 1
+            continue
 
-                # Try to find the existing file for this briefing
-                existing_file = find_existing_file_for_briefing(briefing_id, output_dir)
+        # Get the full briefing data
+        full_briefing = api.get_research_briefing_by_id(briefing_id)
 
-                if existing_file:
-                    logger.info(f"Using existing file for briefing {briefing_id}: {existing_file}")
-                    # Add metadata for the existing file
-                    try:
-                        with open(existing_file, "r", encoding="utf-8") as f:
-                            existing_data = json.load(f)
+        if "error" in full_briefing:
+            logger.error(f"Error retrieving briefing {briefing_id}: {full_briefing['error']}")
+            stats["api_errors"] += 1
+            continue
 
-                        metadata = extract_briefing_metadata(existing_data)
-                        metadata["json_file"] = existing_file
-                        processed_briefings.append(metadata)
-                        continue
-                    except Exception as e:
-                        logger.warning(f"Error processing existing file for {briefing_id}: {e}")
-                        # If we can't process the existing file, we'll re-download it
+        # Extract metadata to dictionary
+        metadata = extract_briefing_metadata(full_briefing)
+
+        # Add to existing IDs so we don't try to download it again
+        existing_ids.add(briefing_id)
+
+        # Download the PDF if not disabled
+        if not skip_pdf_download:
+            # Extract PDF URL
+            pdf_url = metadata.get("pdf_url")
+
+            if pdf_url:
+                identifier = metadata.get("identifier")
+                if identifier:
+                    pdf_filename = f"{identifier}.pdf"
                 else:
-                    logger.warning(f"Briefing ID {briefing_id} in existing_ids but no file found, will re-download")
+                    pdf_filename = f"{briefing_id}.pdf"
 
-            # Get the full briefing data with retry mechanism
-            max_retries = 3
-            retry_delay = 5  # seconds
-            full_briefing = None
+                pdf_filename = clean_filename(pdf_filename)
+                pdf_path = os.path.join(pdf_dir, pdf_filename)
 
-            for retry in range(max_retries):
-                try:
-                    full_briefing = api.get_research_briefing_by_id(briefing_id)
-                    if "error" in full_briefing:
-                        logger.warning(
-                            f"Error retrieving briefing {briefing_id} on attempt {retry+1}: {full_briefing['error']}"
-                        )
-                        if retry < max_retries - 1:
-                            logger.info(f"Retrying in {retry_delay} seconds...")
-                            time.sleep(retry_delay)
-                            retry_delay *= 2  # Exponential backoff
-                        continue
-                    break  # Success, exit retry loop
-                except Exception as e:
-                    logger.error(f"Unexpected error on attempt {retry+1}: {e}")
-                    if retry < max_retries - 1:
-                        logger.info(f"Retrying in {retry_delay} seconds...")
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # Exponential backoff
+                # Check if PDF already exists
+                if os.path.exists(pdf_path):
+                    logger.info(f"PDF already exists: {pdf_filename}")
+                    stats["pdfs_already_exist"] += 1
+                    metadata["pdf_file"] = pdf_path
+                else:
+                    # Download the PDF
+                    if download_pdf_for_briefing(pdf_url, pdf_path):
+                        stats["pdfs_downloaded"] += 1
+                        metadata["pdf_file"] = pdf_path
+                    else:
+                        stats["pdfs_failed"] += 1
+            else:
+                logger.warning(f"No PDF URL found for briefing {briefing_id}")
+                stats["pdfs_no_url"] += 1
 
-            if not full_briefing or "error" in full_briefing:
-                logger.error(f"Failed to retrieve briefing {briefing_id} after {max_retries} attempts")
-                # Create a minimal metadata record with the error
-                metadata = {
-                    "id": briefing_id,
-                    "error": full_briefing.get("error", "Unknown error") if full_briefing else "Failed to retrieve",
+        rows_data.append(metadata)
+        stats["metadata_extracted"] += 1
+
+        # Add a delay between briefings to avoid rate limiting
+        time.sleep(0.5)
+
+        # Save checkpoint after each briefing
+        if checkpoint_file and rows_data:
+            try:
+                # Create a DataFrame from the rows processed so far
+                checkpoint_df = pd.DataFrame(rows_data)
+
+                # Save to checkpoint file
+                checkpoint_csv = f"{checkpoint_file.replace('.json', '')}.csv"
+                checkpoint_df.to_csv(checkpoint_csv, index=False)
+
+                # Add the current statistics to the checkpoint
+                checkpoint_data = {
+                    "stats": stats,
+                    "last_processed_index": i,
+                    "batch_index": batch_index,
+                    "timestamp": datetime.now().isoformat(),
+                    "csv_file": checkpoint_csv,
                 }
-                # Add this to processed briefings but continue to next briefing
-                processed_briefings.append(metadata)
-                continue
 
-            metadata = extract_briefing_metadata(full_briefing)
+                with open(checkpoint_file, "w", encoding="utf-8") as f:
+                    json.dump(checkpoint_data, f, indent=2)
 
-        # Create a sanitized filename
-        title = metadata.get("title", "Unknown")
-        identifier = metadata.get("identifier", "")
-        date = metadata.get("date", "")
-        date_part = date.split("T")[0] if date and "T" in date else ""
+                logger.debug(f"Updated checkpoint at {checkpoint_file}")
+            except Exception as e:
+                logger.warning(f"Error saving checkpoint: {str(e)}")
 
-        # Use identifier or id for the filename
-        ref_part = identifier if identifier else metadata.get("id", "")
+    # Log batch statistics
+    logger.info(f"Batch {batch_index+1}/{total_batches} processing complete:")
+    logger.info(f"  Total briefings in batch: {stats['total_in_batch']}")
+    logger.info(f"  Metadata successfully extracted: {stats['metadata_extracted']}")
+    logger.info(f"  Briefings already existed: {stats['already_exist']}")
+    logger.info(f"  API errors: {stats['api_errors']}")
 
-        # Create a base filename
-        filename_base = clean_filename(f"{date_part}_{ref_part}_{title}")
+    if not skip_pdf_download:
+        logger.info(f"  PDFs successfully downloaded: {stats['pdfs_downloaded']}")
+        logger.info(f"  PDFs already existed: {stats['pdfs_already_exist']}")
+        logger.info(f"  PDFs failed: {stats['pdfs_failed']}")
+        logger.info(f"  Briefings with no PDF URL: {stats['pdfs_no_url']}")
 
-        logger.info(f"Processing briefing: {title}")
-
-        # Save the full JSON response
-        json_path = os.path.join(output_dir, f"{filename_base}.json")
-        try:
-            with open(json_path, "w", encoding="utf-8") as f:
-                json.dump(full_briefing, f, indent=2)
-
-            # Add the file path to the metadata
-            metadata["json_file"] = json_path
-
-            # Add to existing IDs so we don't try to download it again in this session
-            if briefing_id:
-                existing_ids.add(briefing_id)
-        except Exception as e:
-            logger.error(f"Error saving JSON file for briefing {metadata.get('id')}: {e}")
-            metadata["error_saving"] = str(e)
-
-        processed_briefings.append(metadata)
-
-        # Be nice to the API with an adaptive delay
-        # If we're processing many briefings, use a longer delay
-        if total_briefings > 1000:
-            time.sleep(1.0)  # 1 second for very large batches
-        elif total_briefings > 100:
-            time.sleep(0.7)  # 0.7 seconds for large batches
-        else:
-            time.sleep(0.5)  # 0.5 seconds for small batches
-
-    return processed_briefings
+    # Return a DataFrame of the batch results
+    return pd.DataFrame(rows_data)
 
 
 def download_research_briefings(
@@ -662,9 +618,12 @@ def download_research_briefings(
     end_date: Optional[datetime] = None,
     topic: Optional[str] = None,
     search_term: Optional[str] = None,
+    skip_pdf_download: bool = False,
+    batch_size: int = 50,
+    resume_from_checkpoint: bool = False,
 ) -> Dict:
     """
-    Download research briefings matching criteria.
+    Download research briefings matching criteria, including PDFs.
 
     Args:
         output_dir: Directory to save the briefings data
@@ -672,12 +631,20 @@ def download_research_briefings(
         end_date: Maximum date for filtering (defaults to now)
         topic: Filter by specific topic
         search_term: Text search across briefings
+        skip_pdf_download: Whether to skip downloading PDFs
+        batch_size: Number of briefings to process in each batch
+        resume_from_checkpoint: Whether to try resuming from a checkpoint
 
     Returns:
         Dictionary with metadata about the download
     """
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
+
+    # Create PDF directory if needed
+    pdf_dir = os.path.join(output_dir, "pdfs")
+    if not skip_pdf_download:
+        os.makedirs(pdf_dir, exist_ok=True)
 
     # Set default dates if not provided
     if not end_date:
@@ -692,61 +659,43 @@ def download_research_briefings(
     # Initialize API client
     api = ResearchBriefingsAPI()
 
-    # For very large time windows, split into smaller chunks (e.g., monthly)
-    max_chunk_days = 90  # 3 months at a time
-    total_days = (end_date - start_date).days
+    # Create checkpoint file path
+    checkpoint_file = os.path.join(
+        output_dir, f"checkpoint_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.json"
+    )
 
-    if total_days > max_chunk_days:
-        logger.info(f"Large date range detected ({total_days} days). Processing in chunks of {max_chunk_days} days.")
-        all_briefings = []
+    # Try to load checkpoint if requested
+    start_batch = 0
+    batch_dataframes = []
 
-        # Process in chunks
-        chunk_start = start_date
-        while chunk_start < end_date:
-            # Calculate chunk end date (either max_chunk_days ahead or end_date, whichever is earlier)
-            chunk_end = min(chunk_start + timedelta(days=max_chunk_days), end_date)
-
-            logger.info(f"Processing chunk from {chunk_start.date()} to {chunk_end.date()}")
-
-            # Get briefings for this chunk
-            try:
-                chunk_briefings = api.get_all_research_briefings(
-                    start_date=chunk_start, end_date=chunk_end, topic=topic, search_term=search_term
-                )
-
-                logger.info(f"Found {len(chunk_briefings)} briefings in this chunk")
-                all_briefings.extend(chunk_briefings)
-
-                # Check if we should save a checkpoint for this chunk
-                if len(all_briefings) > 0:
-                    checkpoint_file = os.path.join(
-                        output_dir, f"checkpoint_{chunk_start.strftime('%Y%m%d')}_{chunk_end.strftime('%Y%m%d')}.json"
-                    )
-                    with open(checkpoint_file, "w", encoding="utf-8") as f:
-                        json.dump(chunk_briefings, f, indent=2)
-                    logger.info(f"Saved checkpoint to {checkpoint_file}")
-
-                # Move to next chunk
-                chunk_start = chunk_end + timedelta(days=1)
-
-                # Brief delay between chunks
-                time.sleep(2)
-
-            except Exception as e:
-                logger.error(f"Error processing chunk {chunk_start.date()} to {chunk_end.date()}: {e}")
-                # Try to recover by moving to the next chunk
-                chunk_start = chunk_end + timedelta(days=1)
-
-        briefings = all_briefings
-    else:
-        # Get all briefings matching criteria in one go for smaller time windows
+    if resume_from_checkpoint and os.path.exists(checkpoint_file):
         try:
-            briefings = api.get_all_research_briefings(
-                start_date=start_date, end_date=end_date, topic=topic, search_term=search_term
-            )
+            with open(checkpoint_file, "r", encoding="utf-8") as f:
+                checkpoint_data = json.load(f)
+
+            # Check if there's a saved DataFrame
+            if "csv_file" in checkpoint_data and os.path.exists(checkpoint_data["csv_file"]):
+                df = pd.read_csv(checkpoint_data["csv_file"])
+                batch_dataframes.append(df)
+                logger.info(f"Loaded {len(df)} processed briefings from checkpoint CSV")
+
+            if "batch_index" in checkpoint_data:
+                start_batch = checkpoint_data["batch_index"] + 1
+                logger.info(f"Resuming from batch {start_batch}")
+
         except Exception as e:
-            logger.error(f"Error retrieving briefings: {e}")
-            return {"error": str(e)}
+            logger.warning(f"Error loading checkpoint, starting from beginning: {str(e)}")
+            start_batch = 0
+            batch_dataframes = []
+
+    # Get all briefings matching criteria
+    try:
+        briefings = api.get_all_research_briefings(
+            start_date=start_date, end_date=end_date, topic=topic, search_term=search_term
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving briefings: {e}")
+        return {"error": str(e)}
 
     logger.info(f"Found {len(briefings)} research briefings in total")
 
@@ -769,110 +718,131 @@ def download_research_briefings(
         json.dump(briefings, f, indent=2)
     logger.info(f"Saved raw briefings list to {raw_briefings_file}")
 
-    # Process all briefings and save JSON data
-    try:
-        processed_briefings = process_briefings(api, briefings, output_dir)
-    except Exception as e:
-        logger.error(f"Error processing briefings: {e}")
-        return {
-            "error": str(e),
+    # Get existing briefing IDs to avoid re-downloading
+    existing_ids = get_existing_briefing_ids(output_dir)
+
+    # Split briefings into batches
+    briefings_batches = [briefings[i : i + batch_size] for i in range(0, len(briefings), batch_size)]
+    total_batches = len(briefings_batches)
+
+    logger.info(f"Processing {len(briefings)} briefings in {total_batches} batches of {batch_size}")
+
+    # Process each batch, starting from the checkpoint if available
+    for batch_index in range(start_batch, total_batches):
+        batch = briefings_batches[batch_index]
+
+        batch_df = process_briefings_batch(
+            api=api,
+            briefings_batch=batch,
+            pdf_dir=pdf_dir,
+            existing_ids=existing_ids,
+            checkpoint_file=checkpoint_file,
+            skip_pdf_download=skip_pdf_download,
+            batch_index=batch_index,
+            total_batches=total_batches,
+        )
+
+        # Add batch DataFrame to our collection
+        if not batch_df.empty:
+            batch_dataframes.append(batch_df)
+
+        # Save a batch-specific checkpoint
+        batch_csv_file = os.path.join(
+            output_dir, f"batch_{batch_index}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv"
+        )
+        try:
+            batch_df.to_csv(batch_csv_file, index=False)
+            logger.info(f"Saved batch DataFrame to {batch_csv_file}")
+        except Exception as e:
+            logger.warning(f"Error saving batch DataFrame: {str(e)}")
+
+    # Combine all batches into a single DataFrame
+    if batch_dataframes:
+        combined_df = pd.concat(batch_dataframes, ignore_index=True)
+        logger.info(f"Combined {len(batch_dataframes)} batches into DataFrame with {len(combined_df)} rows")
+
+        # Save the complete DataFrame
+        metadata_file = os.path.join(
+            output_dir, f"research_briefings_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv"
+        )
+
+        try:
+            combined_df.to_csv(metadata_file, index=False)
+            logger.info(f"Saved complete DataFrame to {metadata_file}")
+        except Exception as e:
+            logger.error(f"Error saving DataFrame file: {str(e)}")
+
+        # Clean up individual batch files
+        for batch_index in range(start_batch, total_batches):
+            batch_csv_file = os.path.join(
+                output_dir, f"batch_{batch_index}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv"
+            )
+            if os.path.exists(batch_csv_file):
+                try:
+                    os.remove(batch_csv_file)
+                    logger.debug(f"Removed batch file: {batch_csv_file}")
+                except Exception as e:
+                    logger.warning(f"Error removing batch file {batch_csv_file}: {str(e)}")
+
+        # Count successful downloads
+        metadata_rows = len(combined_df)
+        pdfs_downloaded = combined_df["pdf_file"].notna().sum()
+
+        # Save summary metadata about the download
+        metadata = {
             "download_date": datetime.now().isoformat(),
             "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
             "total_briefings": len(briefings),
-            "successful_downloads": 0,
+            "metadata_rows": metadata_rows,
+            "pdfs_downloaded": int(pdfs_downloaded),
+            "metadata_file": metadata_file,
+            "topic_filter": topic,
+            "search_term": search_term,
         }
 
-    # Count successful downloads
-    successful_downloads = sum(1 for b in processed_briefings if "json_file" in b and "error" not in b)
+        try:
+            with open(os.path.join(output_dir, "metadata_summary.json"), "w", encoding="utf-8") as f:
+                json.dump(metadata, f, indent=2)
+        except Exception as e:
+            logger.error(f"Error saving summary metadata file: {e}")
 
-    # Save the metadata
-    metadata_file = os.path.join(
-        output_dir, f"briefings_metadata_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.json"
-    )
+        logger.info(f"Download complete. Found {len(briefings)} briefings")
+        logger.info(f"Processed {metadata_rows} briefings metadata")
+        if not skip_pdf_download:
+            logger.info(f"Downloaded {pdfs_downloaded} PDF files")
 
-    # Save metadata even if there are some errors
-    try:
-        with open(metadata_file, "w", encoding="utf-8") as f:
-            json.dump(processed_briefings, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving metadata file: {e}")
-
-    # Save summary metadata about the download
-    metadata = {
-        "download_date": datetime.now().isoformat(),
-        "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
-        "total_briefings": len(processed_briefings),
-        "successful_downloads": successful_downloads,
-        "topic_filter": topic,
-        "search_term": search_term,
-    }
-
-    try:
-        with open(os.path.join(output_dir, "metadata.json"), "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=2)
-    except Exception as e:
-        logger.error(f"Error saving summary metadata file: {e}")
-
-    logger.info(f"Downloaded {successful_downloads}/{len(processed_briefings)} research briefings to {output_dir}")
-
-    return metadata
-
-
-def clean_filename(filename: str) -> str:
-    """Make a string safe for use as a filename."""
-    # Replace invalid characters
-    invalid_chars = '<>:"/\\|?*'
-    for char in invalid_chars:
-        filename = filename.replace(char, "_")
-
-    # Remove any other non-alphanumeric characters except underscores, hyphens and dots
-    filename = re.sub(r"[^\w\-\.]", "_", filename)
-
-    # Truncate if too long
-    max_length = 200
-    if len(filename) > max_length:
-        filename = filename[:max_length]
-
-    return filename
+        return metadata
+    else:
+        logger.warning("No briefings were processed successfully")
+        return {
+            "download_date": datetime.now().isoformat(),
+            "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
+            "total_briefings": len(briefings),
+            "metadata_rows": 0,
+            "pdfs_downloaded": 0,
+            "error": "No briefings processed successfully",
+        }
 
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Download UK Parliament Research Briefings")
-    # Existing arguments
     parser.add_argument(
         "--output", "-o", default="research_briefings", help="Output directory for downloaded briefings"
     )
-    parser.add_argument("--days", "-d", type=int, default=30, help="Number of days to look back for briefings")
+    parser.add_argument("--days", "-d", type=int, default=7, help="Number of days to look back for briefings")
     parser.add_argument("--start-date", "-s", help="Start date in YYYY-MM-DD format (overrides days parameter)")
-    parser.add_argument("--end-date", "-e", help="End date in YYYY-MM-DD format (defaults to today)")
+    parser.add_argument("--end-date", "-e", help="End date in YYYY-MM-DD format (defaults to 2 weeks from now)")
     parser.add_argument("--topic", "-t", help="Filter by topic")
     parser.add_argument("--search", "-q", help="Search term")
     parser.add_argument(
-        "--chunk-size",
-        "-c",
-        type=int,
-        default=90,
-        help="Maximum chunk size in days for large date ranges (default: 90)",
+        "--batch-size", "-b", type=int, default=50, help="Number of briefings to process in each batch"
     )
     parser.add_argument(
         "--resume", "-r", action="store_true", help="Try to resume a previous download using checkpoint files"
     )
-
-    # Add new arguments for PDF download
-    parser.add_argument("--download-pdfs", action="store_true", help="Download PDF documents for research briefings")
-    parser.add_argument("--pdf-dir", default="pdfs", help="Subdirectory name for PDF storage (default: 'pdfs')")
-    parser.add_argument("--overwrite-pdfs", action="store_true", help="Overwrite existing PDFs")
-
-    # Add mode argument to allow running only PDF download without JSON retrieval
-    parser.add_argument(
-        "--mode",
-        choices=["json", "pdf", "both"],
-        default="json",
-        help="Operation mode: 'json' to download JSON only, 'pdf' to download "
-        + "PDFs only for existing JSONs, 'both' to do both (default: 'json')",
-    )
+    parser.add_argument("--skip-pdfs", action="store_true", help="Skip downloading PDFs (JSON only)")
 
     args = parser.parse_args()
 
@@ -885,7 +855,8 @@ if __name__ == "__main__":
             print(f"Error: Invalid end date format. Use YYYY-MM-DD.")
             sys.exit(1)
     else:
-        end_date = datetime.now()
+        # Default to 2 weeks ago as some briefings are not be immediately available
+        end_date = datetime.now() - timedelta(days=14)
 
     start_date = None
     if args.start_date:
@@ -897,13 +868,14 @@ if __name__ == "__main__":
     else:
         start_date = end_date - timedelta(days=args.days)
 
-    # Execute based on mode
-    if args.mode in ["json", "both"]:
-        # Download JSONs
-        download_research_briefings(
-            output_dir=args.output, start_date=start_date, end_date=end_date, topic=args.topic, search_term=args.search
-        )
-
-    if args.mode in ["pdf", "both"] or args.download_pdfs:
-        # Download PDFs for existing JSONs
-        download_pdfs_for_briefings(json_dir=args.output, output_subdir=args.pdf_dir, overwrite=args.overwrite_pdfs)
+    # Download briefings
+    download_research_briefings(
+        output_dir=args.output,
+        start_date=start_date,
+        end_date=end_date,
+        topic=args.topic,
+        search_term=args.search,
+        skip_pdf_download=args.skip_pdfs,
+        batch_size=args.batch_size,
+        resume_from_checkpoint=args.resume,
+    )

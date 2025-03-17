@@ -80,7 +80,7 @@ def truncate_to_max_tokens(input: str, model_name: str, max_tokens: int) -> bool
     n_tokens, tokens = tokenize_text(input, model_name)
     if n_tokens > max_tokens:
         logging.warning(f"Input text is too long ({n_tokens} tokens). Truncating to {max_tokens} tokens.")
-        input = decode_tokens(tokens[:max_tokens])
+        input = decode_tokens(tokens[:max_tokens], model_name=model_name)
     return input
 
 

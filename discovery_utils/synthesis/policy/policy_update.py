@@ -48,7 +48,7 @@ load_dotenv()
 DEBATE_URL = "https://www.theyworkforyou.com/debates/?id="
 MISSIONS = ["ASF", "AFS", "AHL"]
 
-SLACK_URL = os.environ["SLACK_WEBHOOK_URL_TESTING"]
+SLACK_URL = os.environ["SLACK_WEBHOOK_URL_DISCOVERY"]
 
 
 class HansardData:
@@ -494,7 +494,7 @@ def create_policy_update_message(
         data_signals.append(_collate_data_signals(mission, debate_dicts, quote_dicts))
         mission_blocks.append(_collate_mission_slack_block(mission, debate_dicts, quote_dicts))
 
-    return _combine_and_chunk_slack_blocks(mission_blocks, message_date, data_start_date, data_end_date)
+    return _combine_and_chunk_slack_blocks(mission_blocks, message_date, data_start_date, data_end_date), data_signals
 
 
 def create_and_send_to_slack(slack_webhook: WebhookClient) -> list[dict]:
@@ -502,7 +502,7 @@ def create_and_send_to_slack(slack_webhook: WebhookClient) -> list[dict]:
 
     Assuming default parameters for the policy update message (all missions, 1 week of data)
     """
-    blocks = create_policy_update_message()
+    blocks, _ = create_policy_update_message()
     for block in blocks:
         slack_webhook.send(blocks=block, unfurl_links=False, unfurl_media=False)
     return blocks

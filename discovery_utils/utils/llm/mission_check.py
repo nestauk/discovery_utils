@@ -8,7 +8,7 @@ from discovery_utils.utils.llm.llm_utils import StructuredOutputGenerator
 
 
 CONFIG_PATH = files("discovery_utils.utils.llm").joinpath("prompts_mission_check.yaml")
-CONFIG = safe_yaml_load(open(CONFIG_PATH).read())
+CONFIG = safe_yaml_load(str(CONFIG_PATH))
 
 
 class RelevanceClassifier(BaseModel):

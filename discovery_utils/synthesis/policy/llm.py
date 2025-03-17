@@ -11,7 +11,7 @@ from discovery_utils.utils.llm.llm_utils import StructuredOutputGenerator
 
 
 CONFIG_PATH = files("discovery_utils.synthesis.policy").joinpath("prompts_hansard_synthesis.yaml")
-CONFIG = safe_yaml_load(open(CONFIG_PATH).read())
+CONFIG = safe_yaml_load(str(CONFIG_PATH))
 
 
 class Debate(BaseModel):

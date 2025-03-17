@@ -17,6 +17,7 @@ from slack_sdk.webhook import WebhookClient
 
 WEBHOOKCLIENT = WebhookClient(os.environ["SLACK_WEBHOOK_URL_TESTING"])
 
+
 # Type Definitions
 class SlackBlock(TypedDict):
     type: str
@@ -61,7 +62,7 @@ class SectionBlock(SlackBlock):
     text: Dict[str, str]
 
 
-def clean_text(value: Any) -> str:
+def clean_text(value: Any) -> str:  # noqa: ANN401
     """Clean and format text values for Slack elements.
 
     Args:
@@ -92,7 +93,7 @@ def clean_text(value: Any) -> str:
 class SlackElement:
     """Builder for Slack message elements."""
 
-    def __init__(self, text: Any = ""):
+    def __init__(self, text: Any = "") -> None:  # noqa: ANN401
         self.text = clean_text(text)
         self._style: Dict[str, bool] = {}
 
@@ -198,7 +199,7 @@ class SlackBlock:
 class SlackMessage:
     """Builder for complete Slack messages."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.blocks: List[SlackBlock] = []
         self.block_builder = SlackBlock()
 

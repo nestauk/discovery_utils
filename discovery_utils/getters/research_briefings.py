@@ -21,8 +21,6 @@ from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Set
-from typing import Tuple
-from typing import Union
 
 import pandas as pd
 import requests
@@ -41,7 +39,7 @@ class ResearchBriefingsAPI:
     """Client for interacting with the UK Parliament Research Briefings API."""
 
     def __init__(self, base_url: str = "https://lda.data.parliament.uk") -> None:
-        """Initialize the API client with the base URL."""
+        """Initialise the API client with the base URL."""
         self.base_url = base_url
         self.session = requests.Session()
         # Set a user agent - this is required for PDF downloads
@@ -60,7 +58,6 @@ class ResearchBriefingsAPI:
         end_date: Optional[datetime] = None,
         page: int = 0,
         page_size: int = 500,
-        format: str = "json",
     ) -> Dict[str, Any]:
         """
         Get a list of research briefings matching the specified criteria.
@@ -70,7 +67,6 @@ class ResearchBriefingsAPI:
             end_date: Maximum date for the 'date' field
             page: Page number for pagination
             page_size: Number of results per page
-            format: Response format (json)
 
         Returns:
             Dictionary containing the API response
@@ -364,8 +360,8 @@ def extract_briefing_metadata(full_briefing: Dict[str, Any]) -> Dict[str, Any]:
         "abstract": extract_nested_value(briefing_data, ["abstract"], ""),
         "date": extract_nested_value(briefing_data, ["date"], ""),
         "modified": extract_nested_value(briefing_data, ["modified"], ""),
-        "type": extract_nested_value(briefing_data, ["type"], ""),
-        "subType": extract_nested_value(briefing_data, ["subType"], ""),
+        "type": extract_nested_value(briefing_data, ["type"], "").split("#")[-1],
+        "subType": extract_nested_value(briefing_data, ["subType", "prefLabel"], ""),
         "status": briefing_data.get("status", ""),
         "published": extract_nested_value(briefing_data, ["published"], ""),
         "description": extract_nested_value(briefing_data, ["description"], ""),
@@ -395,11 +391,9 @@ def extract_briefing_metadata(full_briefing: Dict[str, Any]) -> Dict[str, Any]:
             creator_item = creator[0]
             metadata["creator_given_name"] = extract_nested_value(creator_item, ["givenName"], "")
             metadata["creator_family_name"] = extract_nested_value(creator_item, ["familyName"], "")
-            metadata["creator_name"] = extract_nested_value(creator_item, ["fullName"], "")
         elif isinstance(creator, dict):
             metadata["creator_given_name"] = extract_nested_value(creator, ["givenName"], "")
             metadata["creator_family_name"] = extract_nested_value(creator, ["familyName"], "")
-            metadata["creator_name"] = extract_nested_value(creator, ["fullName"], "")
 
     return metadata
 
@@ -640,7 +634,7 @@ def download_research_briefings(
 
     logger.info(f"Downloading research briefings from {start_date.date()} to {end_date.date()}")
 
-    # Initialize API client
+    # Initialise API client
     api = ResearchBriefingsAPI()
 
     # Create checkpoint file path
@@ -749,11 +743,11 @@ def download_research_briefings(
 
         # Save the complete DataFrame
         metadata_file = os.path.join(
-            output_dir, f"research_briefings_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv"
+            output_dir, f"research_briefings_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.parquet"
         )
 
         try:
-            combined_df.to_csv(metadata_file, index=False)
+            combined_df.to_parquet(metadata_file, index=False)
             logger.info(f"Saved complete DataFrame to {metadata_file}")
         except Exception as e:
             logger.error(f"Error saving DataFrame file: {str(e)}")

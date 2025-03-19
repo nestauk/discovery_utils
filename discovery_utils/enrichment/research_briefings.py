@@ -1,30 +1,28 @@
 """
 Parliament Research Briefings Enrichment
 
-This script analyzes research briefings data by performing keyword searches
+This script analyses research briefings data by performing keyword searches
 on both the abstracts and the PDF content from the files downloaded by
 the research_briefings_getter.py module.
 """
 
+import glob
 import json
 import logging
 import os
 import re
 import sys
-import tempfile
 
 from datetime import datetime
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
-from typing import Set
-from typing import Union
+from typing import Tuple
 
 import pandas as pd
 import pdfplumber
 
-# Import the keyword module functions
 from discovery_utils.utils.keywords import enrich_keyword_labels
 from discovery_utils.utils.keywords import get_keyword_hits
 from discovery_utils.utils.keywords import get_keywords
@@ -35,7 +33,7 @@ from discovery_utils.utils.keywords import transform_labels_df
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("evidence_keyword_search.log"), logging.StreamHandler()],
+    handlers=[logging.FileHandler("research_briefings_enrichment.log"), logging.StreamHandler()],
 )
 logger = logging.getLogger(__name__)
 
@@ -51,7 +49,6 @@ def extract_text_from_pdf(pdf_path: str, max_pages: Optional[int] = None) -> str
     Returns:
         Extracted text as a string
     """
-    # First try pdfplumber which handles complex PDFs better
     try:
         with pdfplumber.open(pdf_path) as pdf:
             # Determine page range
@@ -74,28 +71,60 @@ def extract_text_from_pdf(pdf_path: str, max_pages: Optional[int] = None) -> str
         return ""
 
 
-def load_research_briefings(metadata_file: str) -> pd.DataFrame:
+def find_latest_briefings_file(output_dir: str) -> Optional[str]:
     """
-    Load research briefings from a metadata CSV file.
+    Find the most recent research briefings parquet file in the given directory.
 
     Args:
-        metadata_file: Path to the metadata CSV file
+        output_dir: Directory to search for briefings files
+
+    Returns:
+        Path to the most recent briefings file, or None if none found
+    """
+
+    # Look for parquet files matching the likely pattern
+    patterns = [
+        "research_briefing*.parquet",  # Matches both briefings and briefings_with_text
+        "*briefing*.parquet",  # More generic pattern
+        "*.parquet",  # Any parquet file
+    ]
+
+    for pattern in patterns:
+        search_path = os.path.join(output_dir, pattern)
+        matching_files = glob.glob(search_path)
+
+        if matching_files:
+            # Sort by modification time (most recent first)
+            matching_files.sort(key=os.path.getmtime, reverse=True)
+            logger.info(f"Found {len(matching_files)} potential briefings files in {output_dir}")
+            logger.info(f"Using most recent file: {matching_files[0]}")
+            return matching_files[0]
+
+    return None
+
+
+def load_research_briefings(briefings_file: str) -> pd.DataFrame:
+    """
+    Load research briefings from a parquet file.
+
+    Args:
+        briefings_file: Path to the briefings parquet file
 
     Returns:
         DataFrame with research briefing data
     """
     try:
-        df = pd.read_csv(metadata_file)
-        logger.info(f"Loaded {len(df)} research briefings from {metadata_file}")
+        df = pd.read_parquet(briefings_file)
+        logger.info(f"Loaded {len(df)} research briefings from {briefings_file}")
         return df
     except Exception as e:
-        logger.error(f"Error loading research briefings from {metadata_file}: {e}")
+        logger.error(f"Error loading research briefings from {briefings_file}: {e}")
         return pd.DataFrame()
 
 
 def prepare_briefing_data_with_pdf_text(
-    df: pd.DataFrame, max_pages: Optional[int] = None, batch_size: int = 10, cache_dir: Optional[str] = None
-) -> pd.DataFrame:
+    df: pd.DataFrame, max_pages: Optional[int] = None, batch_size: int = 10
+) -> Tuple[pd.DataFrame, Dict[str, int]]:
     """
     Enhance the DataFrame with text extracted from PDFs in batches.
 
@@ -103,18 +132,14 @@ def prepare_briefing_data_with_pdf_text(
         df: DataFrame with research briefing data
         max_pages: Maximum number of pages to extract per PDF
         batch_size: Number of PDFs to process in each batch
-        cache_dir: Directory to cache extracted text (None for no caching)
 
     Returns:
-        DataFrame enhanced with PDF text content
+        Tuple containing:
+        - DataFrame enhanced with PDF text content
+        - Dictionary with PDF processing statistics
     """
     result_df = df.copy()
     result_df["pdf_text"] = None
-
-    # Create or ensure cache directory exists
-    if cache_dir:
-        os.makedirs(cache_dir, exist_ok=True)
-        logger.info(f"Using cache directory: {cache_dir}")
 
     # Process in batches to manage memory usage
     total_rows = len(df)
@@ -123,9 +148,7 @@ def prepare_briefing_data_with_pdf_text(
     logger.info(f"Processing {total_rows} briefings in {num_batches} batches of size {batch_size}")
 
     # Track stats
-    pdfs_processed = 0
-    pdfs_from_cache = 0
-    pdfs_not_found = 0
+    stats = {"total_briefings": total_rows, "pdfs_processed": 0, "pdfs_not_found": 0}
 
     for batch_num in range(num_batches):
         start_idx = batch_num * batch_size
@@ -141,47 +164,13 @@ def prepare_briefing_data_with_pdf_text(
 
             if not pdf_path or pd.isna(pdf_path) or not os.path.exists(pdf_path):
                 logger.debug(f"No PDF found for briefing {row.get('id', '')}")
-                pdfs_not_found += 1
+                stats["pdfs_not_found"] += 1
                 continue
 
-            # Check if we have cached text for this PDF
-            pdf_text = None
-            cache_hit = False
-
-            if cache_dir:
-                # Generate a cache filename based on PDF path and max_pages
-                pdf_basename = os.path.basename(pdf_path)
-                cache_filename = f"{os.path.splitext(pdf_basename)[0]}"
-                if max_pages:
-                    cache_filename += f"_p{max_pages}"
-                cache_filename += ".txt"
-
-                cache_path = os.path.join(cache_dir, cache_filename)
-
-                if os.path.exists(cache_path):
-                    try:
-                        with open(cache_path, "r", encoding="utf-8") as f:
-                            pdf_text = f.read()
-                        cache_hit = True
-                        pdfs_from_cache += 1
-                        logger.debug(f"Using cached text for {pdf_basename}")
-                    except Exception as e:
-                        logger.warning(f"Error reading cache file {cache_path}: {e}")
-
-            # Extract text if not found in cache
-            if pdf_text is None:
-                logger.info(f"Extracting text from PDF: {os.path.basename(pdf_path)}")
-                pdf_text = extract_text_from_pdf(pdf_path, max_pages=max_pages)
-                pdfs_processed += 1
-
-                # Cache the extracted text
-                if cache_dir and pdf_text:
-                    try:
-                        with open(cache_path, "w", encoding="utf-8") as f:
-                            f.write(pdf_text)
-                        logger.debug(f"Cached extracted text to {cache_path}")
-                    except Exception as e:
-                        logger.warning(f"Error writing cache file {cache_path}: {e}")
+            # Extract text from PDF
+            logger.info(f"Extracting text from PDF: {os.path.basename(pdf_path)}")
+            pdf_text = extract_text_from_pdf(pdf_path, max_pages=max_pages)
+            stats["pdfs_processed"] += 1
 
             # Update the DataFrame with the PDF text
             if pdf_text:
@@ -189,16 +178,15 @@ def prepare_briefing_data_with_pdf_text(
 
     # Log statistics
     logger.info(f"PDF text extraction completed:")
-    logger.info(f"  Total PDFs processed: {pdfs_processed}")
-    logger.info(f"  PDFs loaded from cache: {pdfs_from_cache}")
-    logger.info(f"  PDFs not found: {pdfs_not_found}")
+    logger.info(f"  Total PDFs processed: {stats['pdfs_processed']}")
+    logger.info(f"  PDFs not found: {stats['pdfs_not_found']}")
 
-    return result_df
+    return result_df, stats
 
 
 def prepare_data_for_keyword_analysis(
-    df: pd.DataFrame, max_pages: Optional[int] = None, batch_size: int = 10, use_cache: bool = True
-) -> pd.DataFrame:
+    df: pd.DataFrame, max_pages: Optional[int] = None, batch_size: int = 10
+) -> Tuple[pd.DataFrame, Dict[str, int], pd.DataFrame]:
     """
     Prepare the briefing data for keyword analysis, including PDF text.
 
@@ -206,38 +194,38 @@ def prepare_data_for_keyword_analysis(
         df: DataFrame with research briefing data
         max_pages: Maximum number of pages to extract per PDF
         batch_size: Number of PDFs to process in each batch
-        use_cache: Whether to cache extracted PDF text
 
     Returns:
-        DataFrame ready for keyword analysis with 'id' and 'text' columns
+        Tuple containing:
+        - DataFrame ready for keyword analysis with 'id' and 'text' columns
+        - Dictionary with PDF processing statistics
+        - Enhanced DataFrame with PDF text added
     """
-    # Set up cache directory
-    cache_dir = None
-    if use_cache:
-        # Create a temporary directory for cache if not specified
-        cache_dir = tempfile.mkdtemp(prefix="pdf_text_cache_")
-        logger.info(f"Created temporary cache directory: {cache_dir}")
-
     # Extract text from PDFs and add to DataFrame
-    enhanced_df = prepare_briefing_data_with_pdf_text(
-        df, max_pages=max_pages, batch_size=batch_size, cache_dir=cache_dir
-    )
+    enhanced_df, pdf_stats = prepare_briefing_data_with_pdf_text(df, max_pages=max_pages, batch_size=batch_size)
 
-    # Create a clean DataFrame with just id and text
+    # Create a clean DataFrame with just id and text for analysis
     analysis_df = enhanced_df[["id"]].copy()
 
-    # Combine abstract and PDF text
-    analysis_df["text"] = enhanced_df.apply(
-        lambda row: (str(row["abstract"]) if pd.notna(row["abstract"]) else "")
-        + " "
-        + (str(row["pdf_text"]) if pd.notna(row["pdf_text"]) else ""),
+    # For keyword analysis, we'll combine abstract and PDF text
+    # But keep track of the source for each text segment
+    analysis_df["abstract_text"] = enhanced_df.apply(
+        lambda row: str(row["abstract"]) if pd.notna(row["abstract"]) else "",
         axis=1,
     )
+
+    analysis_df["pdf_content"] = enhanced_df.apply(
+        lambda row: str(row["pdf_text"]) if pd.notna(row["pdf_text"]) else "",
+        axis=1,
+    )
+
+    # Combined text for keyword detection
+    analysis_df["text"] = analysis_df["abstract_text"] + " " + analysis_df["pdf_content"]
 
     # Remove rows with empty or missing text
     analysis_df = analysis_df[analysis_df["text"].notna() & (analysis_df["text"] != "")]
 
-    return analysis_df
+    return analysis_df, pdf_stats, enhanced_df
 
 
 def perform_keyword_analysis(
@@ -263,7 +251,7 @@ def perform_keyword_analysis(
     try:
         # Apply keyword enrichment
         logger.info(f"Enriching labels with {keyword_type} keywords...")
-        enriched_df = enrich_keyword_labels(analysis_df, keyword_type)
+        enriched_df = enrich_keyword_labels(analysis_df[["id", "text"]], keyword_type)
 
         # Transform labels to get the expected format
         logger.info("Transforming labels...")
@@ -282,6 +270,64 @@ def perform_keyword_analysis(
         raise
 
 
+def determine_match_location(row, analysis_df):
+    """
+    Determine if a keyword match is from abstract or PDF text.
+
+    Args:
+        row: Row from matches DataFrame with sentence
+        analysis_df: DataFrame with separate abstract and PDF text columns
+
+    Returns:
+        String indicating match location: "abstract", "pdf_text", or "both"
+    """
+    # Get briefing id and sentence
+    briefing_id = row["id"]
+    sentence = row["sentence"]
+
+    # Get abstract and PDF text for this briefing
+    briefing_row = analysis_df.loc[analysis_df["id"] == briefing_id].iloc[0]
+    abstract_text = briefing_row["abstract_text"]
+    pdf_content = briefing_row["pdf_content"]
+
+    # Check if sentence appears in abstract and/or PDF
+    in_abstract = sentence in abstract_text
+    in_pdf = sentence in pdf_content
+
+    if in_abstract and in_pdf:
+        return "both"
+    elif in_abstract:
+        return "abstract"
+    elif in_pdf:
+        return "pdf_text"
+    else:
+        # If we can't find an exact match, make a best guess
+        # This might happen with formatting differences
+        if len(abstract_text) < 100:  # Very short or empty abstract
+            return "pdf_text"
+        elif len(pdf_content) < 100:  # No PDF text
+            return "abstract"
+        else:
+            # Use a more fuzzy approach - look for most of the words in the sentence
+            sentence_words = set(sentence.lower().split())
+            if len(sentence_words) > 3:  # Only meaningful for longer sentences
+                abstract_words = set(abstract_text.lower().split())
+                pdf_words = set(pdf_content.lower().split())
+
+                abstract_overlap = len(sentence_words.intersection(abstract_words)) / len(sentence_words)
+                pdf_overlap = len(sentence_words.intersection(pdf_words)) / len(sentence_words)
+
+                if abstract_overlap > 0.7 and pdf_overlap > 0.7:
+                    return "both"
+                elif abstract_overlap > pdf_overlap:
+                    return "abstract"
+                else:
+                    return "pdf_text"
+
+            # Default case
+            return "unknown"
+
+
 def get_detailed_keyword_matches(
     df: pd.DataFrame, keyword_type: str = "ASF", analysis_df: Optional[pd.DataFrame] = None
 ) -> pd.DataFrame:
@@ -291,7 +337,7 @@ def get_detailed_keyword_matches(
     Args:
         df: DataFrame with research briefing data
         keyword_type: Type of keywords to use for analysis
-        analysis_df: Pre-prepared DataFrame for analysis with 'id' and 'text' columns
+        analysis_df: Pre-prepared DataFrame for analysis with 'id', 'text', 'abstract_text', and 'pdf_content' columns
 
     Returns:
         DataFrame with detailed keyword match information
@@ -330,18 +376,29 @@ def get_detailed_keyword_matches(
                         "title": original_row.get("title", ""),
                         "identifier": original_row.get("identifier", ""),
                         "date": original_row.get("date", ""),
-                        "categories": ", ".join(hit_row["category"]),
+                        "mission_labels": keyword_type,
+                        "topic_labels": ", ".join(hit_row["category"]),
                         "keywords": [kw for sublist in hit_row["keyword"] for kw in sublist],
                         "sentence": hit_row["sentence"],
                         "marked_sentence": hit_row["marked_sentence"],
-                        "match_location": "full_text" if "pdf_text" in df.columns else "abstract",
                     }
                     detailed_matches.append(match_info)
 
         except Exception as e:
             logger.error(f"Error getting keyword matches for {row['id']}: {e}")
 
-    return pd.DataFrame(detailed_matches)
+    # Create DataFrame from matches
+    matches_df = pd.DataFrame(detailed_matches)
+
+    # Determine match location for each match
+    if not matches_df.empty:
+        matches_df["match_location"] = matches_df.apply(lambda row: determine_match_location(row, analysis_df), axis=1)
+
+        # Log match location statistics
+        location_counts = matches_df["match_location"].value_counts()
+        logger.info(f"Match locations: {dict(location_counts)}")
+
+    return matches_df
 
 
 def validate_keyword_matches(matches_df: pd.DataFrame) -> pd.DataFrame:
@@ -381,24 +438,81 @@ def validate_keyword_matches(matches_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(valid_matches) if valid_matches else matches_df.head(0)
 
 
-def analyze_research_briefings(
-    metadata_file: str,
+def generate_pipeline_artifact(
+    metadata: Dict[str, Any], output_dir: str, artifact_filename: str = "enrichment_artifact.json"
+) -> str:
+    """
+    Generate a pipeline artifact file from the enrichment metadata.
+
+    Args:
+        metadata: Dictionary with enrichment metadata
+        output_dir: Directory to save the artifact
+        artifact_filename: Name of the artifact file
+
+    Returns:
+        Path to the created artifact file
+    """
+    artifact_path = os.path.join(output_dir, artifact_filename)
+
+    # Add timestamp to artifact
+    artifact_data = {
+        "timestamp": datetime.now().isoformat(),
+        "analysis_type": "keyword_enrichment",
+    }
+
+    # Add formatted summary
+    artifact_data["summary"] = {
+        "total_briefings_analysed": metadata.get("total_briefings", 0),
+        "keyword_types_used": metadata.get("keyword_types", []),
+        "output_file": os.path.basename(metadata.get("output_file", "")),
+        "status": "success" if not metadata.get("error") else "error",
+        "error_message": metadata.get("error", ""),
+    }
+
+    # Add detailed results
+    artifact_data["results"] = {
+        "total_keyword_matches": metadata.get("total_matches", 0),
+        "unique_briefings_with_matches": metadata.get("unique_briefings_with_matches", 0),
+    }
+
+    # Add detailed results for each keyword type
+    artifact_data["keyword_results"] = {}
+    for keyword_type, result in metadata.get("results", {}).items():
+        artifact_data["keyword_results"][keyword_type] = {
+            "briefings_with_keywords": result.get("briefings_with_keywords", 0),
+            "keyword_matches": result.get("keyword_matches", 0),
+        }
+
+    # Add PDF processing stats if available
+    if "pdf_stats" in metadata:
+        artifact_data["pdf_processing"] = metadata["pdf_stats"]
+
+    # Write to file
+    with open(artifact_path, "w", encoding="utf-8") as f:
+        json.dump(artifact_data, f, indent=2)
+
+    logger.info(f"Generated enrichment pipeline artifact at {artifact_path}")
+    return artifact_path
+
+
+def analyse_research_briefings(
+    briefings_file: str,
     output_dir: str = "analysis_output",
+    output_file: str = "research_briefings_enriched.parquet",
     keyword_types: List[str] = ["ASF", "AFS", "AHL", "X", "Nesta"],
     max_pages: Optional[int] = None,
     batch_size: int = 10,
-    use_cache: bool = True,
 ) -> Dict:
     """
-    Analyze research briefings data with keyword analysis.
+    Analyse research briefings data with keyword analysis.
 
     Args:
-        metadata_file: Path to the metadata CSV file
+        briefings_file: Path to the briefings parquet file
         output_dir: Directory to save the analysis results
+        output_file: Name of the output parquet file
         keyword_types: List of keyword types to use for analysis
         max_pages: Maximum number of pages to extract from each PDF
         batch_size: Number of PDFs to process in each batch
-        use_cache: Whether to cache extracted PDF text
 
     Returns:
         Dictionary with analysis metadata
@@ -406,41 +520,33 @@ def analyze_research_briefings(
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    # Load research briefings from CSV
-    df = load_research_briefings(metadata_file)
+    # Load research briefings from parquet
+    df = load_research_briefings(briefings_file)
 
     if df.empty:
-        logger.error(f"No research briefings found in {metadata_file}")
-        return {"error": "No research briefings found"}
+        error_msg = f"No research briefings found in {briefings_file}"
+        logger.error(error_msg)
+        return {"error": error_msg}
 
-    # Save the base DataFrame
-    base_output_file = os.path.join(output_dir, "research_briefings_base.csv")
-    df.to_csv(base_output_file, index=False)
-    logger.info(f"Saved base research briefings data to {base_output_file}")
-
-    # Prepare data for keyword analysis (extracts PDF text)
+    # Save enhanced DataFrame with PDF text added
     logger.info("Preparing data for keyword analysis (including PDF text)...")
-    analysis_df = prepare_data_for_keyword_analysis(
-        df=df, max_pages=max_pages, batch_size=batch_size, use_cache=use_cache
+    analysis_df, pdf_stats, enhanced_df = prepare_data_for_keyword_analysis(
+        df=df, max_pages=max_pages, batch_size=batch_size
     )
 
-    # Save the analysis DataFrame for debugging
-    analysis_output_file = os.path.join(output_dir, "research_briefings_analysis_df.csv")
-    analysis_df.to_csv(analysis_output_file, index=False)
-    logger.info(f"Saved analysis DataFrame to {analysis_output_file}")
+    # Update the briefings file with PDF text
+    enhanced_file = os.path.join(output_dir, "research_briefings_with_text.parquet")
+    enhanced_df.to_parquet(enhanced_file, index=False)
+    logger.info(f"Saved enhanced briefings data with PDF text to {enhanced_file}")
 
-    # Results for each keyword type
-    results = {}
+    # Collect all matches across keyword types
+    all_matches = []
+    all_results = {}
 
     for keyword_type in keyword_types:
         try:
             # Perform keyword analysis
             result_df = perform_keyword_analysis(df, keyword_type, analysis_df)
-
-            # Save results
-            output_file = os.path.join(output_dir, f"research_briefings_{keyword_type.lower()}_keywords.csv")
-            result_df.to_csv(output_file, index=False)
-            logger.info(f"Saved {keyword_type} keyword analysis to {output_file}")
 
             # Get detailed keyword matches
             matches_df = get_detailed_keyword_matches(df, keyword_type, analysis_df)
@@ -449,20 +555,20 @@ def analyze_research_briefings(
                 # Validate the matches
                 valid_matches_df = validate_keyword_matches(matches_df)
 
-                # Save valid matches
-                matches_file = os.path.join(output_dir, f"research_briefings_{keyword_type.lower()}_matches.csv")
-                valid_matches_df.to_csv(matches_file, index=False)
-                logger.info(f"Saved validated {keyword_type} keyword matches to {matches_file}")
+                # Add to collection of all matches
+                all_matches.append(valid_matches_df)
 
                 # Store results
-                results[keyword_type] = {
+                all_results[keyword_type] = {
                     "total_briefings": len(df),
                     "briefings_with_keywords": int(result_df["has_keywords"].sum()),
                     "keyword_matches": len(valid_matches_df),
                 }
+
+                logger.info(f"Found {len(valid_matches_df)} valid matches for {keyword_type}")
             else:
                 logger.info(f"No keyword matches found for {keyword_type}")
-                results[keyword_type] = {
+                all_results[keyword_type] = {
                     "total_briefings": len(df),
                     "briefings_with_keywords": 0,
                     "keyword_matches": 0,
@@ -470,21 +576,68 @@ def analyze_research_briefings(
 
         except Exception as e:
             logger.error(f"Error processing {keyword_type} keyword analysis: {e}")
-            results[keyword_type] = {"error": str(e)}
+            all_results[keyword_type] = {"error": str(e)}
+
+    # Combine all matches and write to single parquet file
+    if all_matches:
+        combined_matches = pd.concat(all_matches, ignore_index=True)
+        logger.info(f"Combined {len(combined_matches)} matches from all keyword types")
+
+        # Save to parquet file
+        output_path = os.path.join(output_dir, output_file)
+        combined_matches.to_parquet(output_path, index=False)
+        logger.info(f"Saved all keyword matches to {output_path}")
+
+        # Calculate summary statistics
+        unique_briefings = len(combined_matches["id"].unique())
+        total_matches = len(combined_matches)
+    else:
+        logger.warning("No matches found for any keyword type")
+        # Create empty file
+        combined_matches = pd.DataFrame(
+            columns=[
+                "id",
+                "title",
+                "identifier",
+                "date",
+                "mission_labels",
+                "topic_labels",
+                "keywords",
+                "sentence",
+                "marked_sentence",
+                "match_location",
+            ]
+        )
+        output_path = os.path.join(output_dir, output_file)
+        combined_matches.to_parquet(output_path, index=False)
+        logger.info(f"Saved empty matches file to {output_path}")
+
+        unique_briefings = 0
+        total_matches = 0
 
     # Save overall metadata
     metadata = {
         "total_briefings": len(df),
         "keyword_types": keyword_types,
-        "results": results,
+        "results": all_results,
         "timestamp": datetime.now().isoformat(),
+        "output_file": output_path,
+        "total_matches": total_matches,
+        "unique_briefings_with_matches": unique_briefings,
+        "pdf_stats": {
+            "total_briefings": pdf_stats["total_briefings"],
+            "pdfs_processed": pdf_stats["pdfs_processed"],
+            "pdfs_not_found": pdf_stats["pdfs_not_found"],
+            "briefings_with_text": len(analysis_df),
+            "max_pages_per_pdf": max_pages if max_pages else "all",
+        },
     }
 
-    metadata_output_file = os.path.join(output_dir, "analysis_metadata.json")
-    with open(metadata_output_file, "w", encoding="utf-8") as f:
-        json.dump(metadata, f, indent=2)
+    # Generate pipeline artifact for Prefect
+    artifact_path = generate_pipeline_artifact(metadata, output_dir)
 
-    logger.info(f"Saved analysis metadata to {metadata_output_file}")
+    # Add artifact path to returned metadata
+    metadata["artifact_path"] = artifact_path
 
     return metadata
 
@@ -492,16 +645,20 @@ def analyze_research_briefings(
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Analyze UK Parliament Research Briefings")
+    parser = argparse.ArgumentParser(description="Analyse Research Briefings")
     parser.add_argument(
-        "--metadata",
-        "-m",
-        required=True,
-        default="research_briefings.csv",
-        help="Path to the research briefings metadata CSV file",
+        "--briefings-file",
+        "-b",
+        help="Path to the research briefings parquet file (if not provided, will look in output directory)",
     )
     parser.add_argument(
-        "--output", "-o", default="outputs/research_briefings/enrichment", help="Output directory for analysis results"
+        "--output-dir",
+        "-o",
+        default="outputs/research_briefings/enrichment",
+        help="Output directory for analysis results",
+    )
+    parser.add_argument(
+        "--output-file", "-f", default="research_briefings_enriched.parquet", help="Name of the output parquet file"
     )
     parser.add_argument(
         "--keywords",
@@ -516,16 +673,34 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch-size", type=int, default=10, help="Number of PDFs to process in each batch (default: 10)"
     )
-    parser.add_argument("--no-cache", action="store_true", help="Disable caching of extracted PDF text")
 
     args = parser.parse_args()
 
-    # Perform analysis
-    analyze_research_briefings(
-        metadata_file=args.metadata,
-        output_dir=args.output,
+    # If no briefings file provided, search in the output directory
+    briefings_file = args.briefings_file
+    if not briefings_file:
+        logger.info(f"No briefings file provided, searching in {args.output_dir}")
+        # Create the output directory if it doesn't exist
+        os.makedirs(args.output_dir, exist_ok=True)
+        # Search for the most recent briefings file
+        briefings_file = find_latest_briefings_file(args.output_dir)
+
+        if not briefings_file:
+            # Check parent directory
+            parent_dir = os.path.dirname(args.output_dir)
+            logger.info(f"No briefings file found in {args.output_dir}, checking parent directory {parent_dir}")
+            briefings_file = find_latest_briefings_file(parent_dir)
+
+            if not briefings_file:
+                logger.error("No briefings file found. Please provide a valid file path.")
+                sys.exit(1)
+
+    # Perform keyword analysis
+    analyse_research_briefings(
+        briefings_file=briefings_file,
+        output_dir=args.output_dir,
+        output_file=args.output_file,
         keyword_types=args.keywords,
         max_pages=args.max_pages,
         batch_size=args.batch_size,
-        use_cache=not args.no_cache,
     )

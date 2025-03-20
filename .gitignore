@@ -163,6 +163,7 @@ cython_debug/
 data/
 .DS_Store
 .vscode/
+outputs/research_briefings/*
 
 *.parquet
 .credentials/*

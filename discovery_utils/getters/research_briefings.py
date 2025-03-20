@@ -28,6 +28,7 @@ from typing import Tuple
 from typing import Union
 
 import boto3
+import cloudscraper
 import pandas as pd
 import requests
 
@@ -553,6 +554,10 @@ def download_pdf_for_briefing(pdf_url: str, pdf_path: str, max_attempts: int = 3
         True if download was successful, False otherwise
     """
     success = False
+    scraper = cloudscraper.create_scraper()
+
+    # Check there's somewhere to save the pdfs
+    os.makedirs(os.path.dirname(pdf_path), exist_ok=True)
 
     for attempt in range(max_attempts):
         try:
@@ -562,18 +567,18 @@ def download_pdf_for_briefing(pdf_url: str, pdf_path: str, max_attempts: int = 3
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                "Referer": "https://researchbriefings.parliament.uk/",
                 "Accept-Language": "en-US,en;q=0.5",
                 "Connection": "keep-alive",
                 "Upgrade-Insecure-Requests": "1",
             }
 
-            # Set a timeout and use headers to prevent 403 errors
-            response = requests.get(pdf_url, headers=headers, timeout=30)
+            response = scraper.get(pdf_url, headers=headers, timeout=30)
             response.raise_for_status()
 
             # Check if the response is actually a PDF
             content_type = response.headers.get("Content-Type", "")
-            if "application/pdf" not in content_type and not pdf_url.endswith(".pdf"):
+            if "application/pdf" not in content_type:
                 logger.warning(f"Response may not be a PDF (Content-Type: {content_type}). Checking file...")
                 # Check first few bytes for PDF signature
                 if not response.content.startswith(b"%PDF"):

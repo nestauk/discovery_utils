@@ -1,39 +1,47 @@
 """
-Parliament Research Briefings Enrichment
+Research Briefings Enrichment with S3 Integration
 
-This script analyses research briefings data by performing keyword searches
-on both the abstracts and the PDF content from the files downloaded by
-the research_briefings_getter.py module.
+This script processes downloaded research briefings data by performing keyword searches
+on both the abstracts and the PDF content. It integrates with S3 for storage and retrieval.
 """
 
-import glob
 import json
 import logging
 import os
 import re
 import sys
+import tempfile
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 from typing import Tuple
+from typing import Union
 
+import boto3
 import pandas as pd
 import pdfplumber
 
+from botocore.exceptions import ClientError
+
+from discovery_utils.getters.research_briefings import ResearchBriefingsToS3
 from discovery_utils.utils.keywords import enrich_keyword_labels
 from discovery_utils.utils.keywords import get_keyword_hits
 from discovery_utils.utils.keywords import get_keywords
 from discovery_utils.utils.keywords import transform_labels_df
+from discovery_utils.utils.s3 import s3_client
+from discovery_utils.utils.s3 import upload_obj
 
 
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("research_briefings_enrichment.log"), logging.StreamHandler()],
+    handlers=[logging.FileHandler("research_briefings_enrichment.log"), logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
@@ -71,59 +79,120 @@ def extract_text_from_pdf(pdf_path: str, max_pages: Optional[int] = None) -> str
         return ""
 
 
-def find_latest_briefings_file(output_dir: str) -> Optional[str]:
-    """
-    Find the most recent research briefings parquet file in the given directory.
-
-    Args:
-        output_dir: Directory to search for briefings files
-
-    Returns:
-        Path to the most recent briefings file, or None if none found
-    """
-
-    # Look for parquet files matching the likely pattern
-    patterns = [
-        "research_briefing*.parquet",  # Matches both briefings and briefings_with_text
-        "*briefing*.parquet",  # More generic pattern
-        "*.parquet",  # Any parquet file
-    ]
-
-    for pattern in patterns:
-        search_path = os.path.join(output_dir, pattern)
-        matching_files = glob.glob(search_path)
-
-        if matching_files:
-            # Sort by modification time (most recent first)
-            matching_files.sort(key=os.path.getmtime, reverse=True)
-            logger.info(f"Found {len(matching_files)} potential briefings files in {output_dir}")
-            logger.info(f"Using most recent file: {matching_files[0]}")
-            return matching_files[0]
-
-    return None
-
-
-def load_research_briefings(briefings_file: str) -> pd.DataFrame:
+def load_research_briefings(
+    input_file: str = "research_briefings.parquet",
+    use_s3: bool = False,
+    s3_handler: Optional[ResearchBriefingsToS3] = None,
+) -> pd.DataFrame:
     """
     Load research briefings from a parquet file.
 
     Args:
-        briefings_file: Path to the briefings parquet file
+        input_file: Path to the briefings parquet file
+        use_s3: Whether to use S3 storage
+        s3_handler: S3 handler if use_s3 is True
 
     Returns:
         DataFrame with research briefing data
     """
-    try:
-        df = pd.read_parquet(briefings_file)
-        logger.info(f"Loaded {len(df)} research briefings from {briefings_file}")
-        return df
-    except Exception as e:
-        logger.error(f"Error loading research briefings from {briefings_file}: {e}")
-        return pd.DataFrame()
+    if use_s3 and s3_handler:
+        try:
+            # Check if local file exists first
+            if os.path.exists(input_file):
+                logger.info(f"Loading research briefings from local file: {input_file}")
+                df = pd.read_parquet(input_file)
+            else:
+                # Download from S3 to a temporary file
+                logger.info(f"Local file not found, downloading from S3: {s3_handler.cumulative_file_key}")
+                with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
+                    tmp_path = tmp.name
+                    s3_handler.s3_client.download_file(s3_handler.bucket, s3_handler.cumulative_file_key, tmp_path)
+
+                    # Load from temp file
+                    df = pd.read_parquet(tmp_path)
+
+                    # Clean up
+                    os.unlink(tmp_path)
+
+            logger.info(f"Loaded {len(df)} research briefings")
+            return df
+        except Exception as e:
+            logger.error(f"Error loading research briefings from S3: {e}")
+            raise
+    else:
+        # Local file only
+        try:
+            logger.info(f"Loading research briefings from {input_file}")
+            df = pd.read_parquet(input_file)
+            logger.info(f"Loaded {len(df)} research briefings")
+            return df
+        except Exception as e:
+            logger.error(f"Error loading research briefings from {input_file}: {e}")
+            raise
+
+
+def ensure_pdf_available(pdf_file: str, s3_handler: Optional[ResearchBriefingsToS3] = None) -> str:
+    """
+    Ensure the PDF is available locally, downloading from S3 if necessary.
+
+    Args:
+        pdf_file: Path to the PDF file (could be local or S3 URI)
+        s3_handler: S3 handler for downloading from S3
+
+    Returns:
+        Local path to the PDF file, or empty string if not available
+    """
+    # If it's an S3 URI, extract the filename and try to download it
+    if pdf_file.startswith("s3://") and s3_handler:
+        # Extract the key from the S3 URI
+        s3_parts = pdf_file.replace("s3://", "").split("/")
+        bucket = s3_parts[0]
+        key = "/".join(s3_parts[1:])
+
+        # Extract just the filename
+        filename = os.path.basename(key)
+
+        # Define local path
+        local_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdfs")
+        os.makedirs(local_dir, exist_ok=True)
+        local_path = os.path.join(local_dir, filename)
+
+        # Check if it exists locally first
+        if os.path.exists(local_path):
+            logger.info(f"PDF already exists locally: {local_path}")
+            return local_path
+
+        # Download from S3
+        try:
+            logger.info(f"Downloading PDF from S3: {pdf_file}")
+            s3_handler.s3_client.download_file(bucket, key, local_path)
+            logger.info(f"Downloaded PDF to {local_path}")
+            return local_path
+        except Exception as e:
+            logger.error(f"Error downloading PDF from S3: {e}")
+            return ""
+
+    # If it's already a local path, check if it exists
+    elif os.path.exists(pdf_file):
+        logger.info(f"Using local PDF: {pdf_file}")
+        return pdf_file
+
+    # If local_pdf_file is provided in metadata, use that
+    elif "local_pdf_file" in pdf_file:
+        local_path = pdf_file["local_pdf_file"]
+        if os.path.exists(local_path):
+            logger.info(f"Using local PDF from metadata: {local_path}")
+            return local_path
+
+    logger.warning(f"PDF not found: {pdf_file}")
+    return ""
 
 
 def prepare_briefing_data_with_pdf_text(
-    df: pd.DataFrame, max_pages: Optional[int] = None, batch_size: int = 10
+    df: pd.DataFrame,
+    max_pages: Optional[int] = None,
+    batch_size: int = 10,
+    s3_handler: Optional[ResearchBriefingsToS3] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, int]]:
     """
     Enhance the DataFrame with text extracted from PDFs in batches.
@@ -132,6 +201,7 @@ def prepare_briefing_data_with_pdf_text(
         df: DataFrame with research briefing data
         max_pages: Maximum number of pages to extract per PDF
         batch_size: Number of PDFs to process in each batch
+        s3_handler: S3 handler if use_s3 is True
 
     Returns:
         Tuple containing:
@@ -148,7 +218,7 @@ def prepare_briefing_data_with_pdf_text(
     logger.info(f"Processing {total_rows} briefings in {num_batches} batches of size {batch_size}")
 
     # Track stats
-    stats = {"total_briefings": total_rows, "pdfs_processed": 0, "pdfs_not_found": 0}
+    stats = {"total_briefings": total_rows, "pdfs_processed": 0, "pdfs_not_found": 0, "s3_downloads": 0}
 
     for batch_num in range(num_batches):
         start_idx = batch_num * batch_size
@@ -160,21 +230,35 @@ def prepare_briefing_data_with_pdf_text(
 
         # Process each briefing in the batch
         for idx, row in batch_df.iterrows():
-            pdf_path = row.get("pdf_file")
+            # First check for local_pdf_file
+            pdf_path = row.get("local_pdf_file", None)
 
-            if not pdf_path or pd.isna(pdf_path) or not os.path.exists(pdf_path):
-                logger.debug(f"No PDF found for briefing {row.get('id', '')}")
+            # If not found, check regular pdf_file
+            if not pdf_path or pd.isna(pdf_path):
+                pdf_path = row.get("pdf_file", None)
+
+            if not pdf_path or pd.isna(pdf_path):
+                logger.debug(f"No PDF file specified for briefing {row.get('id', '')}")
+                stats["pdfs_not_found"] += 1
+                continue
+
+            # Ensure the PDF is available locally
+            local_pdf_path = ensure_pdf_available(pdf_path, s3_handler)
+
+            if not local_pdf_path:
+                logger.warning(f"Could not obtain PDF for briefing {row.get('id', '')}")
                 stats["pdfs_not_found"] += 1
                 continue
 
             # Extract text from PDF
-            logger.info(f"Extracting text from PDF: {os.path.basename(pdf_path)}")
-            pdf_text = extract_text_from_pdf(pdf_path, max_pages=max_pages)
-            stats["pdfs_processed"] += 1
+            logger.info(f"Extracting text from PDF: {os.path.basename(local_pdf_path)}")
+            pdf_text = extract_text_from_pdf(local_pdf_path, max_pages=max_pages)
 
-            # Update the DataFrame with the PDF text
             if pdf_text:
+                stats["pdfs_processed"] += 1
                 result_df.at[idx, "pdf_text"] = pdf_text
+            else:
+                stats["pdfs_not_found"] += 1
 
     # Log statistics
     logger.info(f"PDF text extraction completed:")
@@ -185,7 +269,11 @@ def prepare_briefing_data_with_pdf_text(
 
 
 def prepare_data_for_keyword_analysis(
-    df: pd.DataFrame, max_pages: Optional[int] = None, batch_size: int = 10
+    df: pd.DataFrame,
+    max_pages: Optional[int] = None,
+    batch_size: int = 10,
+    use_s3: bool = False,
+    s3_handler: Optional[ResearchBriefingsToS3] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, int], pd.DataFrame]:
     """
     Prepare the briefing data for keyword analysis, including PDF text.
@@ -194,6 +282,8 @@ def prepare_data_for_keyword_analysis(
         df: DataFrame with research briefing data
         max_pages: Maximum number of pages to extract per PDF
         batch_size: Number of PDFs to process in each batch
+        use_s3: Whether to use S3 storage
+        s3_handler: S3 handler if use_s3 is True
 
     Returns:
         Tuple containing:
@@ -201,20 +291,73 @@ def prepare_data_for_keyword_analysis(
         - Dictionary with PDF processing statistics
         - Enhanced DataFrame with PDF text added
     """
-    # Extract text from PDFs and add to DataFrame
-    enhanced_df, pdf_stats = prepare_briefing_data_with_pdf_text(df, max_pages=max_pages, batch_size=batch_size)
+    # Check if we already have a text cumulative file in S3
+    text_df = None
+    if use_s3 and s3_handler:
+        text_file_key = f"{s3_handler.prefix}/research_briefings_text.parquet"
+        try:
+            # Download the text file to a temp location
+            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
+                tmp_path = tmp.name
+                s3_handler.s3_client.download_file(s3_handler.bucket, text_file_key, tmp_path)
+
+                # Load the existing text data
+                text_df = pd.read_parquet(tmp_path)
+                logger.info(f"Loaded existing text data for {len(text_df)} briefings from S3")
+
+                # Clean up
+                os.unlink(tmp_path)
+        except ClientError:
+            logger.info("No existing text data found in S3, will extract from PDFs")
+        except Exception as e:
+            logger.warning(f"Error loading text data from S3: {e}")
+
+    # Find briefings that already have text
+    ids_with_text = set()
+    if text_df is not None and not text_df.empty:
+        # Create a map of ID -> text
+        text_map = dict(zip(text_df["id"], text_df["pdf_text"]))
+
+        # Add text to the main DataFrame where available
+        for idx, row in df.iterrows():
+            if row["id"] in text_map:
+                df.at[idx, "pdf_text"] = text_map[row["id"]]
+                ids_with_text.add(row["id"])
+
+    # Find briefings that need text extraction
+    df_needs_text = df[~df["id"].isin(ids_with_text)].copy()
+
+    if not df_needs_text.empty:
+        logger.info(f"Extracting text for {len(df_needs_text)} briefings that don't have text yet")
+        # Extract text for briefings that don't have it yet
+        text_extracted_df, pdf_stats = prepare_briefing_data_with_pdf_text(
+            df_needs_text, max_pages=max_pages, batch_size=batch_size, s3_handler=s3_handler
+        )
+
+        # Merge back into main DataFrame
+        for idx, row in text_extracted_df.iterrows():
+            if pd.notna(row["pdf_text"]):
+                df.at[idx, "pdf_text"] = row["pdf_text"]
+    else:
+        logger.info("All briefings already have text data")
+        pdf_stats = {
+            "total_briefings": len(df),
+            "pdfs_processed": len(ids_with_text),
+            "pdfs_not_found": 0,
+            "s3_downloads": 0,
+        }
 
     # Create a clean DataFrame with just id and text for analysis
-    analysis_df = enhanced_df[["id"]].copy()
+    analysis_df = df[["id"]].copy()
 
     # For keyword analysis, we'll combine abstract and PDF text
     # But keep track of the source for each text segment
-    analysis_df["abstract_text"] = enhanced_df.apply(
+    analysis_df["abstract_text"] = df.apply(
         lambda row: str(row["abstract"]) if pd.notna(row["abstract"]) else "",
         axis=1,
     )
 
-    analysis_df["pdf_content"] = enhanced_df.apply(
+    analysis_df["pdf_content"] = df.apply(
         lambda row: str(row["pdf_text"]) if pd.notna(row["pdf_text"]) else "",
         axis=1,
     )
@@ -225,7 +368,20 @@ def prepare_data_for_keyword_analysis(
     # Remove rows with empty or missing text
     analysis_df = analysis_df[analysis_df["text"].notna() & (analysis_df["text"] != "")]
 
-    return analysis_df, pdf_stats, enhanced_df
+    # If we're using S3, update the text cumulative file
+    if use_s3 and s3_handler:
+        # Create a DataFrame with just id and pdf_text
+        updated_text_df = df[["id", "pdf_text"]].copy()
+        updated_text_df = updated_text_df[updated_text_df["pdf_text"].notna()]
+
+        try:
+            # Upload to S3
+            upload_obj(updated_text_df, s3_handler.bucket, text_file_key)
+            logger.info(f"Updated text cumulative file in S3 with {len(updated_text_df)} entries")
+        except Exception as e:
+            logger.error(f"Error updating text cumulative file in S3: {e}")
+
+    return analysis_df, pdf_stats, df
 
 
 def perform_keyword_analysis(
@@ -438,8 +594,88 @@ def validate_keyword_matches(matches_df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(valid_matches) if valid_matches else matches_df.head(0)
 
 
+def update_cumulative_keyword_matches(
+    matches_df: pd.DataFrame,
+    s3_handler: ResearchBriefingsToS3,
+    csv_key: str = "research_briefings_labelstore_keywords.csv",
+) -> bool:
+    """
+    Update the cumulative keyword matches file in S3.
+
+    Args:
+        matches_df: DataFrame with new keyword matches
+        s3_handler: S3 handler for S3 operations
+        csv_key: S3 key for the cumulative CSV file
+
+    Returns:
+        True if update was successful, False otherwise
+    """
+    if matches_df.empty:
+        logger.warning("No keyword matches to update")
+        return False
+
+    full_key = f"{s3_handler.prefix}/{csv_key}"
+
+    try:
+        # Check if file exists in S3
+        try:
+            s3_handler.s3_client.head_object(Bucket=s3_handler.bucket, Key=full_key)
+            file_exists = True
+        except ClientError:
+            file_exists = False
+
+        if file_exists:
+            # Download existing file
+            with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
+                tmp_path = tmp.name
+                s3_handler.s3_client.download_file(s3_handler.bucket, full_key, tmp_path)
+
+                # Load existing data
+                existing_df = pd.read_csv(tmp_path)
+
+                # Clean up
+                os.unlink(tmp_path)
+
+                # Concatenate with new data
+                logger.info(f"Updating keyword matches: {len(existing_df)} existing + {len(matches_df)} new")
+                combined_df = pd.concat([existing_df, matches_df], ignore_index=True)
+
+                # Remove duplicates based on same sentence and keyword
+                dedup_df = combined_df.drop_duplicates(subset=["id", "sentence", "keywords"], keep="last")
+
+                logger.info(f"After deduplication: {len(dedup_df)} entries")
+        else:
+            # First time creating file
+            logger.info(f"Creating new keyword matches CSV with {len(matches_df)} entries")
+            dedup_df = matches_df
+
+        # Upload to S3
+        # First save to temp file
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
+            tmp_path = tmp.name
+            dedup_df.to_csv(tmp_path, index=False)
+
+            # Upload to S3
+            s3_handler.s3_client.upload_file(tmp_path, s3_handler.bucket, full_key)
+
+            # Clean up
+            os.unlink(tmp_path)
+
+        logger.info(f"Successfully updated cumulative keyword matches in S3: s3://{s3_handler.bucket}/{full_key}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Error updating cumulative keyword matches in S3: {e}")
+        return False
+
+
 def generate_pipeline_artifact(
-    metadata: Dict[str, Any], output_dir: str, artifact_filename: str = "enrichment_artifact.json"
+    metadata: Dict[str, Any],
+    output_dir: str,
+    run_date: datetime,
+    artifact_filename: str = "enrichment_artifact.json",
+    use_s3: bool = False,
+    s3_handler: Optional[ResearchBriefingsToS3] = None,
 ) -> str:
     """
     Generate a pipeline artifact file from the enrichment metadata.
@@ -447,16 +683,18 @@ def generate_pipeline_artifact(
     Args:
         metadata: Dictionary with enrichment metadata
         output_dir: Directory to save the artifact
+        run_date: Date of the run
         artifact_filename: Name of the artifact file
+        use_s3: Whether to use S3 storage
+        s3_handler: S3 handler if use_s3 is True
 
     Returns:
         Path to the created artifact file
     """
-    artifact_path = os.path.join(output_dir, artifact_filename)
-
     # Add timestamp to artifact
     artifact_data = {
         "timestamp": datetime.now().isoformat(),
+        "run_date": run_date.isoformat(),
         "analysis_type": "keyword_enrichment",
     }
 
@@ -487,57 +725,85 @@ def generate_pipeline_artifact(
     if "pdf_stats" in metadata:
         artifact_data["pdf_processing"] = metadata["pdf_stats"]
 
-    # Write to file
-    with open(artifact_path, "w", encoding="utf-8") as f:
-        json.dump(artifact_data, f, indent=2)
+    # Generate artifact based on storage mode
+    if use_s3 and s3_handler:
+        # Upload to the same runs directory in S3
+        date_str = run_date.strftime("%Y%m%d")
+        s3_key = f"{s3_handler.runs_prefix}/enrichment_{date_str}.json"
 
-    logger.info(f"Generated enrichment pipeline artifact at {artifact_path}")
+        try:
+            # Upload the artifact JSON to S3
+            upload_obj(artifact_data, s3_handler.bucket, s3_key)
+            logger.info(f"Generated enrichment pipeline artifact in S3: s3://{s3_handler.bucket}/{s3_key}")
+            artifact_path = f"s3://{s3_handler.bucket}/{s3_key}"
+        except Exception as e:
+            logger.error(f"Error uploading artifact to S3: {e}")
+
+            # Fall back to local storage
+            artifact_path = os.path.join(output_dir, artifact_filename)
+            with open(artifact_path, "w", encoding="utf-8") as f:
+                json.dump(artifact_data, f, indent=2)
+            logger.info(f"Generated enrichment pipeline artifact locally: {artifact_path}")
+    else:
+        # Save locally
+        artifact_path = os.path.join(output_dir, artifact_filename)
+        with open(artifact_path, "w", encoding="utf-8") as f:
+            json.dump(artifact_data, f, indent=2)
+        logger.info(f"Generated enrichment pipeline artifact locally: {artifact_path}")
+
     return artifact_path
 
 
 def analyse_research_briefings(
-    briefings_file: str,
+    input_file: str = "research_briefings.parquet",
     output_dir: str = "analysis_output",
-    output_file: str = "research_briefings_enriched.parquet",
     keyword_types: List[str] = ["ASF", "AFS", "AHL", "X", "Nesta"],
     max_pages: Optional[int] = None,
     batch_size: int = 10,
+    use_s3: bool = False,
+    s3_prefix: str = None,
 ) -> Dict:
     """
     Analyse research briefings data with keyword analysis.
 
     Args:
-        briefings_file: Path to the briefings parquet file
+        input_file: Path to the briefings parquet file
         output_dir: Directory to save the analysis results
-        output_file: Name of the output parquet file
         keyword_types: List of keyword types to use for analysis
         max_pages: Maximum number of pages to extract from each PDF
         batch_size: Number of PDFs to process in each batch
+        use_s3: Whether to use S3 storage
+        s3_prefix: S3 prefix (folder path) if use_s3 is True
 
     Returns:
         Dictionary with analysis metadata
     """
+    # Set the run date (used for file naming)
+    run_date = datetime.now()
+
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
+    # Initialize S3 handler if using S3
+    s3_handler = None
+    if use_s3:
+        s3_handler = ResearchBriefingsToS3(s3_prefix)
+
     # Load research briefings from parquet
-    df = load_research_briefings(briefings_file)
+    df = load_research_briefings(input_file, use_s3, s3_handler)
 
     if df.empty:
-        error_msg = f"No research briefings found in {briefings_file}"
+        error_msg = f"No research briefings found in {input_file}"
         logger.error(error_msg)
-        return {"error": error_msg}
+        metadata = {"error": error_msg, "run_date": run_date.isoformat(), "status": "error"}
+        generate_pipeline_artifact(metadata, output_dir, run_date, use_s3=use_s3, s3_handler=s3_handler)
+        return metadata
 
-    # Save enhanced DataFrame with PDF text added
+    # Prepare data for keyword analysis (including PDF text)
     logger.info("Preparing data for keyword analysis (including PDF text)...")
     analysis_df, pdf_stats, enhanced_df = prepare_data_for_keyword_analysis(
-        df=df, max_pages=max_pages, batch_size=batch_size
+        df=df, max_pages=max_pages, batch_size=batch_size, use_s3=use_s3, s3_handler=s3_handler
     )
-
-    # Update the briefings file with PDF text
-    enhanced_file = os.path.join(output_dir, "research_briefings_with_text.parquet")
-    enhanced_df.to_parquet(enhanced_file, index=False)
-    logger.info(f"Saved enhanced briefings data with PDF text to {enhanced_file}")
 
     # Collect all matches across keyword types
     all_matches = []
@@ -578,15 +844,20 @@ def analyse_research_briefings(
             logger.error(f"Error processing {keyword_type} keyword analysis: {e}")
             all_results[keyword_type] = {"error": str(e)}
 
-    # Combine all matches and write to single parquet file
+    # Combine all matches
     if all_matches:
         combined_matches = pd.concat(all_matches, ignore_index=True)
         logger.info(f"Combined {len(combined_matches)} matches from all keyword types")
 
-        # Save to parquet file
-        output_path = os.path.join(output_dir, output_file)
-        combined_matches.to_parquet(output_path, index=False)
-        logger.info(f"Saved all keyword matches to {output_path}")
+        # Save to CSV file
+        date_str = run_date.strftime("%Y%m%d")
+        local_output_file = os.path.join(output_dir, f"research_briefings_enriched_{date_str}.csv")
+        combined_matches.to_csv(local_output_file, index=False)
+        logger.info(f"Saved all keyword matches locally to {local_output_file}")
+
+        # If using S3, also update the cumulative keyword matches file
+        if use_s3 and s3_handler:
+            update_cumulative_keyword_matches(combined_matches, s3_handler)
 
         # Calculate summary statistics
         unique_briefings = len(combined_matches["id"].unique())
@@ -608,9 +879,10 @@ def analyse_research_briefings(
                 "match_location",
             ]
         )
-        output_path = os.path.join(output_dir, output_file)
-        combined_matches.to_parquet(output_path, index=False)
-        logger.info(f"Saved empty matches file to {output_path}")
+        date_str = run_date.strftime("%Y%m%d")
+        local_output_file = os.path.join(output_dir, f"research_briefings_enriched_{date_str}.csv")
+        combined_matches.to_csv(local_output_file, index=False)
+        logger.info(f"Saved empty matches file locally to {local_output_file}")
 
         unique_briefings = 0
         total_matches = 0
@@ -621,20 +893,20 @@ def analyse_research_briefings(
         "keyword_types": keyword_types,
         "results": all_results,
         "timestamp": datetime.now().isoformat(),
-        "output_file": output_path,
+        "run_date": run_date.isoformat(),
+        "output_file": local_output_file,
         "total_matches": total_matches,
         "unique_briefings_with_matches": unique_briefings,
         "pdf_stats": {
             "total_briefings": pdf_stats["total_briefings"],
             "pdfs_processed": pdf_stats["pdfs_processed"],
             "pdfs_not_found": pdf_stats["pdfs_not_found"],
-            "briefings_with_text": len(analysis_df),
             "max_pages_per_pdf": max_pages if max_pages else "all",
         },
     }
 
-    # Generate pipeline artifact for Prefect
-    artifact_path = generate_pipeline_artifact(metadata, output_dir)
+    # Generate pipeline artifact
+    artifact_path = generate_pipeline_artifact(metadata, output_dir, run_date, use_s3=use_s3, s3_handler=s3_handler)
 
     # Add artifact path to returned metadata
     metadata["artifact_path"] = artifact_path
@@ -647,18 +919,16 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Analyse Research Briefings")
     parser.add_argument(
-        "--briefings-file",
-        "-b",
-        help="Path to the research briefings parquet file (if not provided, will look in output directory)",
+        "--input-file",
+        "-i",
+        default="outputs/research_briefings/research_briefings.parquet",
+        help="Path to the research briefings parquet file",
     )
     parser.add_argument(
         "--output-dir",
         "-o",
         default="outputs/research_briefings/enrichment",
         help="Output directory for analysis results",
-    )
-    parser.add_argument(
-        "--output-file", "-f", default="research_briefings_enriched.parquet", help="Name of the output parquet file"
     )
     parser.add_argument(
         "--keywords",
@@ -673,34 +943,25 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch-size", type=int, default=10, help="Number of PDFs to process in each batch (default: 10)"
     )
+    parser.add_argument("--use-s3", action="store_true", help="Store files in S3 instead of locally")
+    parser.add_argument(
+        "--s3-bucket", default="discovery-iss", help="S3 bucket name (required if --use-s3 is specified)"
+    )
+    parser.add_argument(
+        "--s3-prefix",
+        default="data/policy/research_briefings",
+        help="S3 prefix (folder path) (required if --use-s3 is specified)",
+    )
 
     args = parser.parse_args()
 
-    # If no briefings file provided, search in the output directory
-    briefings_file = args.briefings_file
-    if not briefings_file:
-        logger.info(f"No briefings file provided, searching in {args.output_dir}")
-        # Create the output directory if it doesn't exist
-        os.makedirs(args.output_dir, exist_ok=True)
-        # Search for the most recent briefings file
-        briefings_file = find_latest_briefings_file(args.output_dir)
-
-        if not briefings_file:
-            # Check parent directory
-            parent_dir = os.path.dirname(args.output_dir)
-            logger.info(f"No briefings file found in {args.output_dir}, checking parent directory {parent_dir}")
-            briefings_file = find_latest_briefings_file(parent_dir)
-
-            if not briefings_file:
-                logger.error("No briefings file found. Please provide a valid file path.")
-                sys.exit(1)
-
     # Perform keyword analysis
     analyse_research_briefings(
-        briefings_file=briefings_file,
+        input_file=args.input_file,
         output_dir=args.output_dir,
-        output_file=args.output_file,
         keyword_types=args.keywords,
         max_pages=args.max_pages,
         batch_size=args.batch_size,
+        use_s3=args.use_s3,
+        s3_prefix=args.s3_prefix,
     )

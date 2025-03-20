@@ -1,9 +1,10 @@
 """
-Research Briefings Getter
+Research Briefings Getter with S3 Integration
 
 This script downloads research briefings data from the Parliament Open Data API,
 including both the JSON metadata and PDF documents. It stores the metadata in
-a DataFrame and downloads PDFs as separate files.
+a DataFrame and downloads PDFs as separate files, with options to store results
+locally or in S3.
 """
 
 import glob
@@ -12,18 +13,30 @@ import logging
 import os
 import re
 import sys
+import tempfile
 import time
 
 from datetime import datetime
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Set
+from typing import Tuple
+from typing import Union
 
+import boto3
 import pandas as pd
 import requests
+
+from botocore.exceptions import ClientError
+
+# Import S3 utilities
+from discovery_utils.utils.s3 import BUCKET_NAME_RAW
+from discovery_utils.utils.s3 import s3_client
+from discovery_utils.utils.s3 import upload_obj
 
 
 # Set up logging
@@ -163,7 +176,7 @@ class ResearchBriefingsAPI:
 
             # Log the URL from the result field
             if "result" in data and "_about" in data["result"]:
-                logger.info(f"Found briefing URL: {data['result']['_about']}")
+                logger.debug(f"Found briefing URL: {data['result']['_about']}")
 
             return data
         except requests.exceptions.Timeout:
@@ -175,6 +188,248 @@ class ResearchBriefingsAPI:
         except requests.exceptions.RequestException as e:
             logger.error(f"Error retrieving briefing {briefing_id}: {e}")
             return {"error": str(e)}
+
+
+class ResearchBriefingsToS3:
+    """Class to handle S3 interactions for research briefings data."""
+
+    def __init__(self, prefix: str):
+        """
+        Initialize the S3 handler.
+
+        Args:
+            bucket: S3 bucket name
+            prefix: S3 prefix (folder path)
+        """
+        self.bucket = BUCKET_NAME_RAW
+        self.prefix = prefix
+        self.s3_client = s3_client()
+
+        # Define standard paths
+        self.cumulative_file_key = f"{prefix}/research_briefings.parquet"
+        self.runs_prefix = f"{prefix}/runs"
+        self.pdfs_prefix = f"{prefix}/pdfs"
+
+        logger.info(f"Initialized S3 handler for bucket: {self.bucket}, prefix: {prefix}")
+
+    def create_run_directory(self, run_date: datetime) -> str:
+        """
+        Create a run directory for the current run.
+
+        Args:
+            run_date: Date of the run
+
+        Returns:
+            Run directory prefix
+        """
+        date_str = run_date.strftime("%Y%m%d_%H%M%S")
+        return f"{self.prefix}/runs/{date_str}"
+
+    def get_existing_briefing_ids(self) -> Set[str]:
+        """
+        Get set of IDs for briefings that already exist in S3.
+
+        Returns:
+            Set of existing briefing IDs
+        """
+        existing_ids = set()
+
+        # Try to get IDs from cumulative file
+        try:
+            # Check if cumulative file exists
+            self.s3_client.head_object(Bucket=self.bucket, Key=self.cumulative_file_key)
+
+            # Download to temp file and read
+            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
+                tmp_path = tmp.name
+                self.s3_client.download_file(self.bucket, self.cumulative_file_key, tmp_path)
+
+                # Read the parquet file
+                df = pd.read_parquet(tmp_path)
+
+                # Clean up
+                os.unlink(tmp_path)
+
+                # Extract IDs
+                if "id" in df.columns:
+                    existing_ids = set(df["id"].dropna().astype(str))
+                    logger.info(f"Found {len(existing_ids)} existing briefing IDs in cumulative file")
+
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "404":
+                logger.info(f"No cumulative file found in S3")
+            else:
+                logger.warning(f"Error checking cumulative file: {e}")
+
+        # Also check for any PDFs
+        try:
+            # List objects to find PDFs
+            paginator = self.s3_client.get_paginator("list_objects_v2")
+            pdf_count = 0
+
+            for page in paginator.paginate(Bucket=self.bucket, Prefix=self.pdfs_prefix):
+                if "Contents" in page:
+                    for obj in page["Contents"]:
+                        key = obj["Key"]
+                        if key.endswith(".pdf"):
+                            pdf_count += 1
+                            # Extract ID from filename
+                            pdf_basename = os.path.basename(key)
+                            pdf_id = os.path.splitext(pdf_basename)[0]
+                            existing_ids.add(pdf_id)
+
+            if pdf_count > 0:
+                logger.info(f"Found {pdf_count} PDF files in S3")
+
+        except Exception as e:
+            logger.warning(f"Error checking for PDFs in S3: {e}")
+
+        return existing_ids
+
+    def upload_pdf(self, local_path: str, filename: str) -> str:
+        """
+        Upload a PDF file to S3.
+
+        Args:
+            local_path: Local path to the PDF file
+            filename: Desired filename in S3
+
+        Returns:
+            S3 URI for the uploaded file
+        """
+        s3_key = f"{self.pdfs_prefix}/{filename}"
+
+        try:
+            self.s3_client.upload_file(local_path, self.bucket, s3_key)
+            logger.info(f"Uploaded PDF to S3: s3://{self.bucket}/{s3_key}")
+            return f"s3://{self.bucket}/{s3_key}"
+        except Exception as e:
+            logger.error(f"Failed to upload PDF to S3: {e}")
+            return ""
+
+    def check_pdf_exists(self, filename: str) -> bool:
+        """
+        Check if a PDF already exists in S3.
+
+        Args:
+            filename: PDF filename to check
+
+        Returns:
+            True if the PDF exists, False otherwise
+        """
+        s3_key = f"{self.pdfs_prefix}/{filename}"
+
+        try:
+            self.s3_client.head_object(Bucket=self.bucket, Key=s3_key)
+            return True
+        except ClientError:
+            return False
+
+    def upload_run_data(self, df: pd.DataFrame, run_dir: str) -> str:
+        """
+        Upload data for a specific run to S3.
+
+        Args:
+            df: DataFrame with run data
+            run_dir: Run directory prefix
+
+        Returns:
+            S3 URI for the uploaded file
+        """
+        if df.empty:
+            logger.warning("Empty DataFrame, not uploading run data")
+            return ""
+
+        filename = f"research_briefings.parquet"
+        s3_key = f"{run_dir}/{filename}"
+
+        try:
+            # Upload the DataFrame
+            upload_obj(df, self.bucket, s3_key)
+            logger.info(f"Uploaded run data to S3: s3://{self.bucket}/{s3_key}")
+            return f"s3://{self.bucket}/{s3_key}"
+        except Exception as e:
+            logger.error(f"Error uploading run data to S3: {e}")
+            return ""
+
+    def upload_artifact(self, artifact_data: dict, run_dir: str) -> str:
+        """
+        Upload pipeline artifact for a run.
+
+        Args:
+            artifact_data: Artifact data dictionary
+            run_dir: Run directory prefix
+
+        Returns:
+            S3 URI for the uploaded artifact
+        """
+        filename = "artifact.json"
+        s3_key = f"{run_dir}/{filename}"
+
+        try:
+            # Upload the artifact
+            upload_obj(artifact_data, self.bucket, s3_key)
+            logger.info(f"Uploaded artifact to S3: s3://{self.bucket}/{s3_key}")
+            return f"s3://{self.bucket}/{s3_key}"
+        except Exception as e:
+            logger.error(f"Error uploading artifact to S3: {e}")
+            return ""
+
+    def update_cumulative_file(self, new_data: pd.DataFrame) -> bool:
+        """
+        Update the cumulative research briefings file with new data.
+
+        Args:
+            new_data: DataFrame with new briefings data
+
+        Returns:
+            True if update was successful, False otherwise
+        """
+        if new_data.empty:
+            logger.warning("No new data to update cumulative file with")
+            return False
+
+        try:
+            # Check if cumulative file exists
+            cumulative_exists = True
+            try:
+                self.s3_client.head_object(Bucket=self.bucket, Key=self.cumulative_file_key)
+            except ClientError:
+                cumulative_exists = False
+
+            if cumulative_exists:
+                # Download existing file
+                with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
+                    tmp_path = tmp.name
+                    self.s3_client.download_file(self.bucket, self.cumulative_file_key, tmp_path)
+
+                    # Load existing data
+                    existing_df = pd.read_parquet(tmp_path)
+
+                    # Clean up temp file
+                    os.unlink(tmp_path)
+
+                    # Merge with new data
+                    logger.info(f"Updating cumulative file: {len(existing_df)} existing + {len(new_data)} new records")
+
+                    # Concatenate and drop duplicates
+                    combined_df = pd.concat([existing_df, new_data], ignore_index=True)
+                    updated_df = combined_df.drop_duplicates(subset="id", keep="last")
+
+                    logger.info(f"Cumulative file will have {len(updated_df)} records after deduplication")
+            else:
+                # First time creating cumulative file
+                logger.info(f"Creating new cumulative file with {len(new_data)} records")
+                updated_df = new_data
+
+            # Upload updated file
+            upload_obj(updated_df, self.bucket, self.cumulative_file_key)
+            logger.info(f"Successfully updated cumulative file in S3: s3://{self.bucket}/{self.cumulative_file_key}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error updating cumulative file: {e}")
+            return False
 
 
 def extract_nested_value(data: Dict[str, Any], path: List[str], default: Any = None) -> Any:
@@ -229,9 +484,9 @@ def clean_filename(filename: str) -> str:
     return filename
 
 
-def get_existing_briefing_ids(output_dir: str) -> Set[str]:
+def get_existing_briefing_ids_local(output_dir: str) -> Set[str]:
     """
-    Check if a metadata CSV exists and extract briefing IDs from it.
+    Check if a metadata CSV exists locally and extract briefing IDs from it.
 
     Args:
         output_dir: Directory to check for existing metadata CSV
@@ -243,25 +498,31 @@ def get_existing_briefing_ids(output_dir: str) -> Set[str]:
 
     # Look for metadata CSV files
     csv_files = glob.glob(os.path.join(output_dir, "research_briefings_*.csv"))
+    parquet_files = glob.glob(os.path.join(output_dir, "research_briefings_*.parquet"))
 
-    if not csv_files:
-        logger.info(f"No existing metadata CSV found in {output_dir}")
+    metadata_files = csv_files + parquet_files
+
+    if not metadata_files:
+        logger.info(f"No existing metadata files found in {output_dir}")
         return existing_ids
 
-    # Use the most recent CSV file
-    latest_csv = max(csv_files, key=os.path.getmtime)
-    logger.info(f"Found existing metadata CSV: {latest_csv}")
+    # Use the most recent file
+    latest_file = max(metadata_files, key=os.path.getmtime)
+    logger.info(f"Found existing metadata file: {latest_file}")
 
     try:
-        # Read the CSV file
-        df = pd.read_csv(latest_csv)
+        # Read the file
+        if latest_file.endswith(".csv"):
+            df = pd.read_csv(latest_file)
+        else:  # parquet
+            df = pd.read_parquet(latest_file)
 
         # Extract IDs
         if "id" in df.columns:
             existing_ids = set(df["id"].dropna().astype(str))
-            logger.info(f"Found {len(existing_ids)} existing briefing IDs in {latest_csv}")
+            logger.info(f"Found {len(existing_ids)} existing briefing IDs in {latest_file}")
     except Exception as e:
-        logger.warning(f"Error processing existing CSV file {latest_csv}: {e}")
+        logger.warning(f"Error processing existing file {latest_file}: {e}")
 
     # Also check PDFs directory to find additional IDs
     pdf_dir = os.path.join(output_dir, "pdfs")
@@ -275,7 +536,7 @@ def get_existing_briefing_ids(output_dir: str) -> Set[str]:
             pdf_id = os.path.splitext(pdf_basename)[0]
             existing_ids.add(pdf_id)
 
-    logger.info(f"Total {len(existing_ids)} existing briefing IDs found")
+    logger.info(f"Total {len(existing_ids)} existing briefing IDs found locally")
     return existing_ids
 
 
@@ -401,31 +662,31 @@ def extract_briefing_metadata(full_briefing: Dict[str, Any]) -> Dict[str, Any]:
 def process_briefings_batch(
     api: ResearchBriefingsAPI,
     briefings_batch: List[Dict[str, Any]],
+    output_dir: str,
     pdf_dir: str,
     existing_ids: Set[str],
-    checkpoint_file: str,
-    batch_index: int = 0,
-    total_batches: int = 1,
-) -> pd.DataFrame:
+    use_s3: bool = False,
+    s3_handler: Optional[ResearchBriefingsToS3] = None,
+) -> Tuple[pd.DataFrame, Dict[str, int]]:
     """
     Process a batch of briefings: extract metadata to DataFrame and download PDFs.
 
     Args:
         api: The API client
         briefings_batch: List of briefings metadata in the current batch
+        output_dir: Directory to save the PDF files locally
         pdf_dir: Directory to save the PDF files
         existing_ids: Set of already downloaded briefing IDs
-        checkpoint_file: Path to save checkpoint data
-        batch_index: Index of the current batch
-        total_batches: Total number of batches
+        use_s3: Whether to use S3 storage
+        s3_handler: S3 handler if use_s3 is True
 
     Returns:
-        DataFrame with briefing metadata
+        Tuple of (DataFrame with briefing metadata, statistics dictionary)
     """
     # List to collect row data for the DataFrame
     rows_data = []
 
-    logger.info(f"Processing batch {batch_index+1}/{total_batches} with {len(briefings_batch)} briefings")
+    logger.info(f"Processing {len(briefings_batch)} briefings")
 
     # Track statistics
     stats = {
@@ -440,7 +701,7 @@ def process_briefings_batch(
     }
 
     for i, briefing in enumerate(briefings_batch):
-        logger.info(f"Processing briefing {i+1}/{len(briefings_batch)} in batch {batch_index+1}/{total_batches}")
+        logger.info(f"Processing briefing {i+1}/{len(briefings_batch)}")
 
         # Extract briefing ID
         briefing_id = None
@@ -486,20 +747,81 @@ def process_briefings_batch(
                 pdf_filename = f"{briefing_id}.pdf"
 
             pdf_filename = clean_filename(pdf_filename)
-            pdf_path = os.path.join(pdf_dir, pdf_filename)
 
-            # Check if PDF already exists
-            if os.path.exists(pdf_path):
-                logger.info(f"PDF already exists: {pdf_filename}")
-                stats["pdfs_already_exist"] += 1
-                metadata["pdf_file"] = pdf_path  # Add path to existing PDF
-            else:
-                # Download the PDF
-                if download_pdf_for_briefing(pdf_url, pdf_path):
-                    stats["pdfs_downloaded"] += 1
-                    metadata["pdf_file"] = pdf_path  # Add path to new PDF
+            # Always create the local PDF directory
+            if not os.path.exists(pdf_dir):
+                os.makedirs(pdf_dir, exist_ok=True)
+
+            # Local PDF path will be the same regardless of storage mode
+            local_pdf_path = os.path.join(pdf_dir, pdf_filename)
+
+            if use_s3:
+                # First check if the PDF already exists locally
+                if os.path.exists(local_pdf_path):
+                    logger.info(f"PDF already exists locally: {pdf_filename}")
+                    stats["pdfs_already_exist"] += 1
+                    # Set both S3 and local paths in metadata
+                    metadata["pdf_file"] = f"s3://{s3_handler.bucket}/{s3_handler.pdfs_prefix}/{pdf_filename}"
+                    metadata["local_pdf_file"] = local_pdf_path
+                # If not local, check if it exists in S3
+                elif s3_handler.check_pdf_exists(pdf_filename):
+                    logger.info(f"PDF exists in S3 but not locally, downloading: {pdf_filename}")
+
+                    # Download from S3 to local path
+                    try:
+                        s3_handler.s3_client.download_file(
+                            s3_handler.bucket, f"{s3_handler.pdfs_prefix}/{pdf_filename}", local_pdf_path
+                        )
+                        logger.info(f"Downloaded PDF from S3 to local path: {local_pdf_path}")
+                        stats["pdfs_already_exist"] += 1
+
+                        # Set both paths in metadata
+                        metadata["pdf_file"] = f"s3://{s3_handler.bucket}/{s3_handler.pdfs_prefix}/{pdf_filename}"
+                        metadata["local_pdf_file"] = local_pdf_path
+                    except Exception as e:
+                        logger.error(f"Failed to download PDF from S3: {e}")
+                        # Try downloading from original source
+                        if download_pdf_for_briefing(pdf_url, local_pdf_path):
+                            # Upload to S3
+                            s3_path = s3_handler.upload_pdf(local_pdf_path, pdf_filename)
+                            if s3_path:
+                                stats["pdfs_downloaded"] += 1
+                                metadata["pdf_file"] = s3_path
+                                metadata["local_pdf_file"] = local_pdf_path
+                            else:
+                                stats["pdfs_failed"] += 1
+                        else:
+                            stats["pdfs_failed"] += 1
                 else:
-                    stats["pdfs_failed"] += 1
+                    # Neither local nor in S3, download from source
+                    if download_pdf_for_briefing(pdf_url, local_pdf_path):
+                        # Upload to S3
+                        s3_path = s3_handler.upload_pdf(local_pdf_path, pdf_filename)
+                        if s3_path:
+                            stats["pdfs_downloaded"] += 1
+                            metadata["pdf_file"] = s3_path
+                            metadata["local_pdf_file"] = local_pdf_path
+                        else:
+                            stats["pdfs_failed"] += 1
+                    else:
+                        stats["pdfs_failed"] += 1
+            else:
+                # Local storage mode (simpler case - just download if needed)
+                # Check if PDF already exists locally
+                if os.path.exists(local_pdf_path):
+                    logger.info(f"PDF already exists locally: {pdf_filename}")
+                    stats["pdfs_already_exist"] += 1
+                    metadata["pdf_file"] = local_pdf_path
+                    # For consistency, set both fields the same in local mode
+                    metadata["local_pdf_file"] = local_pdf_path
+                else:
+                    # Download the PDF
+                    if download_pdf_for_briefing(pdf_url, local_pdf_path):
+                        stats["pdfs_downloaded"] += 1
+                        metadata["pdf_file"] = local_pdf_path
+                        metadata["local_pdf_file"] = local_pdf_path
+                    else:
+                        stats["pdfs_failed"] += 1
         else:
             logger.warning(f"No PDF URL found for briefing {briefing_id}")
             stats["pdfs_no_url"] += 1
@@ -511,33 +833,8 @@ def process_briefings_batch(
         # Add a delay between briefings to be nice to the API
         time.sleep(0.5)
 
-        # Save checkpoint after each briefing
-        if checkpoint_file and rows_data:
-            try:
-                # Create a DataFrame from the rows processed so far
-                checkpoint_df = pd.DataFrame(rows_data)
-
-                # Save directly to checkpoint CSV file
-                checkpoint_df.to_csv(checkpoint_file, index=False)
-
-                # Also save a stats file alongside it
-                stats_file = f"{checkpoint_file}.stats.json"
-                stats_data = {
-                    "stats": stats,
-                    "last_processed_index": i,
-                    "batch_index": batch_index,
-                    "timestamp": datetime.now().isoformat(),
-                }
-
-                with open(stats_file, "w", encoding="utf-8") as f:
-                    json.dump(stats_data, f, indent=2)
-
-                logger.debug(f"Updated checkpoint at {checkpoint_file}")
-            except Exception as e:
-                logger.warning(f"Error saving checkpoint: {str(e)}")
-
     # Log batch statistics
-    logger.info(f"Batch {batch_index+1}/{total_batches} processing complete:")
+    logger.info(f"Batch processing complete:")
     logger.info(f"  Total briefings in batch: {stats['total_in_batch']}")
     logger.info(f"  Metadata successfully extracted: {stats['metadata_extracted']}")
     logger.info(f"  Briefings already existed: {stats['already_exist']}")
@@ -547,12 +844,18 @@ def process_briefings_batch(
     logger.info(f"  PDFs failed: {stats['pdfs_failed']}")
     logger.info(f"  Briefings with no PDF URL: {stats['pdfs_no_url']}")
 
-    # Return a DataFrame of the batch results
-    return pd.DataFrame(rows_data)
+    # Return a DataFrame of the batch results and stats
+    return pd.DataFrame(rows_data), stats
 
 
 def generate_pipeline_artifact(
-    metadata: Dict[str, Any], output_dir: str, artifact_filename: str = "pipeline_artifact.json"
+    metadata: Dict[str, Any],
+    output_dir: str,
+    run_date: datetime,
+    artifact_filename: str = "pipeline_artifact.json",
+    use_s3: bool = False,
+    s3_handler: Optional[ResearchBriefingsToS3] = None,
+    run_dir: Optional[str] = None,
 ) -> str:
     """
     Generate a pipeline artifact file from the metadata.
@@ -560,16 +863,19 @@ def generate_pipeline_artifact(
     Args:
         metadata: Dictionary with download metadata
         output_dir: Directory to save the artifact
+        run_date: Date of the run
         artifact_filename: Name of the artifact file
+        use_s3: Whether to use S3 storage
+        s3_handler: S3 handler if use_s3 is True
+        run_dir: Run directory in S3
 
     Returns:
         Path to the created artifact file
     """
-    artifact_path = os.path.join(output_dir, artifact_filename)
-
     # Add timestamp to artifact
     artifact_data = {
         "timestamp": datetime.now().isoformat(),
+        "run_date": run_date.isoformat(),
     }
 
     # Add formatted summary
@@ -582,18 +888,29 @@ def generate_pipeline_artifact(
             "end": metadata.get("date_range", {}).get("end", ""),
         },
         "output_files": {
-            "metadata_csv": os.path.basename(metadata.get("metadata_file", "")),
+            "metadata_file": os.path.basename(metadata.get("metadata_file", "")),
             "pdf_count": metadata.get("pdfs_downloaded", 0),
         },
         "status": "success" if not metadata.get("error") else "error",
         "error_message": metadata.get("error", ""),
+        "storage_mode": "s3" if use_s3 else "local",
     }
 
-    # Write to file
-    with open(artifact_path, "w", encoding="utf-8") as f:
-        json.dump(artifact_data, f, indent=2)
+    if use_s3:
+        # Upload artifact to S3 runs directory
+        artifact_path = s3_handler.upload_artifact(artifact_data, run_dir)
+    else:
+        # Save artifact locally
+        artifact_path = os.path.join(output_dir, artifact_filename)
 
-    logger.info(f"Generated pipeline artifact at {artifact_path}")
+        # Create directory if needed
+        os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+
+        with open(artifact_path, "w", encoding="utf-8") as f:
+            json.dump(artifact_data, f, indent=2)
+
+        logger.info(f"Generated pipeline artifact at {artifact_path}")
+
     return artifact_path
 
 
@@ -602,7 +919,9 @@ def download_research_briefings(
     start_date: Optional[datetime] = None,
     end_date: Optional[datetime] = None,
     batch_size: int = 50,
-    resume_from_checkpoint: bool = False,
+    use_s3: bool = False,
+    s3_prefix: str = None,
+    update_cumulative: bool = True,
 ) -> Dict[str, Any]:
     """
     Download research briefings matching criteria, including PDFs.
@@ -612,17 +931,32 @@ def download_research_briefings(
         start_date: Minimum date for filtering (defaults to 30 days ago)
         end_date: Maximum date for filtering (defaults to now)
         batch_size: Number of briefings to process in each batch
-        resume_from_checkpoint: Whether to try resuming from a checkpoint
+        use_s3: Whether to use S3 storage
+        s3_prefix: S3 prefix (folder path) if use_s3 is True
+        update_cumulative: Whether to update the cumulative file with new data
 
     Returns:
         Dictionary with metadata about the download
     """
-    # Create output directory
+    # Set the run date (used for file naming)
+    run_date = datetime.now()
+
+    # Create S3 handler if using S3
+    s3_handler = None
+    run_dir = None
+    if use_s3:
+        s3_handler = ResearchBriefingsToS3(s3_prefix)
+        run_dir = s3_handler.create_run_directory(run_date)
+        logger.info(f"Created run directory: {run_dir}")
+
+    # Always create local output directory, regardless of storage mode
     os.makedirs(output_dir, exist_ok=True)
 
-    # Create PDF directory
+    # Always create PDF directory for local copies, regardless of storage mode
     pdf_dir = os.path.join(output_dir, "pdfs")
     os.makedirs(pdf_dir, exist_ok=True)
+
+    logger.info(f"Local PDF storage directory: {pdf_dir}")
 
     # Set default dates if not provided
     if not end_date:
@@ -633,38 +967,13 @@ def download_research_briefings(
         start_date = end_date - timedelta(days=30)
 
     logger.info(f"Downloading research briefings from {start_date.date()} to {end_date.date()}")
+    if use_s3:
+        logger.info(f"Using S3 storage: s3://{BUCKET_NAME_RAW}/{s3_prefix}")
+    else:
+        logger.info(f"Using local storage: {output_dir}")
 
     # Initialise API client
     api = ResearchBriefingsAPI()
-
-    # Create checkpoint file path
-    checkpoint_file = os.path.join(
-        output_dir, f"checkpoint_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv"
-    )
-
-    # Try to load checkpoint if requested
-    start_batch = 0
-    batch_dataframes = []
-
-    if resume_from_checkpoint and os.path.exists(checkpoint_file):
-        try:
-            # Load the checkpoint CSV directly
-            df = pd.read_csv(checkpoint_file)
-            batch_dataframes.append(df)
-            logger.info(f"Loaded {len(df)} processed briefings from checkpoint CSV")
-
-            # Look for the stats file to get batch index
-            stats_file = f"{checkpoint_file}.stats.json"
-            if os.path.exists(stats_file):
-                with open(stats_file, "r", encoding="utf-8") as f:
-                    stats_data = json.load(f)
-                    if "batch_index" in stats_data:
-                        start_batch = stats_data["batch_index"] + 1
-                        logger.info(f"Resuming from batch {start_batch}")
-        except Exception as e:
-            logger.warning(f"Error loading checkpoint, starting from beginning: {str(e)}")
-            start_batch = 0
-            batch_dataframes = []
 
     # Get all briefings matching criteria
     try:
@@ -672,7 +981,7 @@ def download_research_briefings(
     except Exception as e:
         logger.error(f"Error retrieving briefings: {e}")
         error_metadata = {
-            "download_date": datetime.now().isoformat(),
+            "download_date": run_date.isoformat(),
             "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
             "total_briefings": 0,
             "metadata_rows": 0,
@@ -680,7 +989,9 @@ def download_research_briefings(
             "error": str(e),
         }
         # Generate pipeline artifact for the error case
-        generate_pipeline_artifact(error_metadata, output_dir)
+        generate_pipeline_artifact(
+            error_metadata, output_dir, run_date, use_s3=use_s3, s3_handler=s3_handler, run_dir=run_dir
+        )
         return error_metadata
 
     logger.info(f"Found {len(briefings)} research briefings in total")
@@ -688,7 +999,7 @@ def download_research_briefings(
     if not briefings:
         logger.warning("No briefings found matching the criteria")
         no_data_metadata = {
-            "download_date": datetime.now().isoformat(),
+            "download_date": run_date.isoformat(),
             "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
             "total_briefings": 0,
             "metadata_rows": 0,
@@ -696,117 +1007,105 @@ def download_research_briefings(
             "status": "success",
         }
         # Generate pipeline artifact for the no data case
-        generate_pipeline_artifact(no_data_metadata, output_dir)
+        generate_pipeline_artifact(
+            no_data_metadata, output_dir, run_date, use_s3=use_s3, s3_handler=s3_handler, run_dir=run_dir
+        )
         return no_data_metadata
 
     # Get existing briefing IDs to avoid re-downloading
-    existing_ids = get_existing_briefing_ids(output_dir)
+    if use_s3:
+        existing_ids = s3_handler.get_existing_briefing_ids()
+    else:
+        existing_ids = get_existing_briefing_ids_local(output_dir)
 
     # Split briefings into batches
     briefings_batches = [briefings[i : i + batch_size] for i in range(0, len(briefings), batch_size)]
-    total_batches = len(briefings_batches)
 
-    logger.info(f"Processing {len(briefings)} briefings in {total_batches} batches of {batch_size}")
+    # Process all batches
+    all_dfs = []
+    all_stats = []
 
-    # Process each batch, starting from the checkpoint if available
-    for batch_index in range(start_batch, total_batches):
-        batch = briefings_batches[batch_index]
-
-        batch_df = process_briefings_batch(
+    for i, batch in enumerate(briefings_batches):
+        logger.info(f"Processing batch {i+1}/{len(briefings_batches)}")
+        batch_df, batch_stats = process_briefings_batch(
             api=api,
             briefings_batch=batch,
+            output_dir=output_dir,
             pdf_dir=pdf_dir,
             existing_ids=existing_ids,
-            checkpoint_file=checkpoint_file,
-            batch_index=batch_index,
-            total_batches=total_batches,
+            use_s3=use_s3,
+            s3_handler=s3_handler,
         )
 
-        # Add batch DataFrame to our collection
         if not batch_df.empty:
-            batch_dataframes.append(batch_df)
-
-        # Save a batch-specific checkpoint
-        batch_csv_file = os.path.join(
-            output_dir, f"batch_{batch_index}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv"
-        )
-        try:
-            batch_df.to_csv(batch_csv_file, index=False)
-            logger.info(f"Saved batch DataFrame to {batch_csv_file}")
-        except Exception as e:
-            logger.warning(f"Error saving batch DataFrame: {str(e)}")
+            all_dfs.append(batch_df)
+            all_stats.append(batch_stats)
 
     # Combine all batches into a single DataFrame
-    if batch_dataframes:
-        combined_df = pd.concat(batch_dataframes, ignore_index=True)
-        logger.info(f"Combined {len(batch_dataframes)} batches into DataFrame with {len(combined_df)} rows")
+    if all_dfs:
+        combined_df = pd.concat(all_dfs, ignore_index=True)
+        logger.info(f"Combined {len(all_dfs)} batches into DataFrame with {len(combined_df)} rows")
 
-        # Save the complete DataFrame
-        metadata_file = os.path.join(
-            output_dir, f"research_briefings_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.parquet"
-        )
+        # Calculate aggregate statistics
+        pdfs_downloaded = sum(stats.get("pdfs_downloaded", 0) for stats in all_stats)
+        pdfs_already_exist = sum(stats.get("pdfs_already_exist", 0) for stats in all_stats)
+        total_pdfs = pdfs_downloaded + pdfs_already_exist
+
+        # Save the DataFrame both locally and to S3 if applicable
+        local_metadata_file = os.path.join(output_dir, f"research_briefings.parquet")
 
         try:
-            combined_df.to_parquet(metadata_file, index=False)
-            logger.info(f"Saved complete DataFrame to {metadata_file}")
+            # Always save locally first
+            combined_df.to_parquet(local_metadata_file, index=False)
+            logger.info(f"Saved DataFrame locally to {local_metadata_file}")
+
+            if use_s3:
+                # Also upload to S3
+                s3_metadata_file = s3_handler.upload_run_data(combined_df, run_dir)
+
+                # For tracking, use the S3 path in metadata
+                metadata_file = s3_metadata_file
+
+                # Update cumulative file if requested
+                if update_cumulative and s3_metadata_file:
+                    s3_handler.update_cumulative_file(combined_df)
+            else:
+                # For local-only mode, use the local path
+                metadata_file = local_metadata_file
         except Exception as e:
             logger.error(f"Error saving DataFrame file: {str(e)}")
-
-        # Clean up checkpoint and batch files
-        logger.info("Cleaning up temporary files...")
-        files_to_clean = []
-
-        # Find checkpoint files
-        checkpoint_pattern = os.path.join(output_dir, f"checkpoint_*.csv")
-        files_to_clean.extend(glob.glob(checkpoint_pattern))
-
-        # Find stats files
-        stats_pattern = os.path.join(output_dir, f"*.stats.json")
-        files_to_clean.extend(glob.glob(stats_pattern))
-
-        # Find batch files
-        batch_pattern = os.path.join(
-            output_dir, f"batch_*_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.csv"
-        )
-        files_to_clean.extend(glob.glob(batch_pattern))
-
-        # Delete the files
-        for file_path in files_to_clean:
-            try:
-                os.remove(file_path)
-                logger.debug(f"Removed temporary file: {file_path}")
-            except Exception as e:
-                logger.warning(f"Error removing temporary file {file_path}: {str(e)}")
-
-        logger.info(f"Cleanup complete. Removed {len(files_to_clean)} temporary files")
-
-        # Count successful downloads
-        metadata_rows = len(combined_df)
-        pdfs_downloaded = combined_df["pdf_file"].notna().sum()
+            metadata_file = None
 
         # Save summary metadata about the download
         metadata = {
-            "download_date": datetime.now().isoformat(),
+            "download_date": run_date.isoformat(),
             "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
             "total_briefings": len(briefings),
-            "metadata_rows": metadata_rows,
+            "metadata_rows": len(combined_df),
             "pdfs_downloaded": int(pdfs_downloaded),
+            "pdfs_already_exist": int(pdfs_already_exist),
+            "total_pdfs": int(total_pdfs),
             "metadata_file": metadata_file,
             "status": "success",
+            "storage_mode": "s3" if use_s3 else "local",
         }
 
         # Generate pipeline artifact
-        generate_pipeline_artifact(metadata, output_dir)
+        generate_pipeline_artifact(
+            metadata, output_dir, run_date, use_s3=use_s3, s3_handler=s3_handler, run_dir=run_dir
+        )
 
         logger.info(f"Download complete. Found {len(briefings)} briefings")
-        logger.info(f"Processed {metadata_rows} briefings metadata")
-        logger.info(f"Downloaded {pdfs_downloaded} PDF files")
+        logger.info(f"Processed {len(combined_df)} briefings metadata")
+        logger.info(f"Downloaded {pdfs_downloaded} new PDF files")
+        logger.info(f"Found {pdfs_already_exist} existing PDF files")
+        logger.info(f"Total PDFs: {total_pdfs}")
 
         return metadata
     else:
         logger.warning("No briefings were processed successfully")
         no_success_metadata = {
-            "download_date": datetime.now().isoformat(),
+            "download_date": run_date.isoformat(),
             "date_range": {"start": start_date.isoformat(), "end": end_date.isoformat()},
             "total_briefings": len(briefings),
             "metadata_rows": 0,
@@ -815,7 +1114,9 @@ def download_research_briefings(
         }
 
         # Generate pipeline artifact for the no success case
-        generate_pipeline_artifact(no_success_metadata, output_dir)
+        generate_pipeline_artifact(
+            no_success_metadata, output_dir, run_date, use_s3=use_s3, s3_handler=s3_handler, run_dir=run_dir
+        )
 
         return no_success_metadata
 
@@ -833,8 +1134,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch-size", "-b", type=int, default=50, help="Number of briefings to process in each batch"
     )
+    parser.add_argument("--use-s3", action="store_true", help="Store files in S3 instead of locally")
     parser.add_argument(
-        "--resume", "-r", action="store_true", help="Try to resume a previous download using checkpoint files"
+        "--s3-prefix",
+        default="data/policy/research_briefings",
+        help="S3 prefix (folder path) (required if --use-s3 is specified)",
+    )
+    parser.add_argument(
+        "--no-update-cumulative",
+        action="store_true",
+        help="Don't update the cumulative file with new data (only applies with --use-s3)",
     )
 
     args = parser.parse_args()
@@ -866,5 +1175,7 @@ if __name__ == "__main__":
         start_date=start_date,
         end_date=end_date,
         batch_size=args.batch_size,
-        resume_from_checkpoint=args.resume,
+        use_s3=args.use_s3,
+        s3_prefix=args.s3_prefix,
+        update_cumulative=not args.no_update_cumulative,
     )

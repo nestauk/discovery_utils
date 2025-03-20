@@ -199,6 +199,7 @@ def _download_obj(
             ".geojson",
             ".xlsx",
             ".xlsm",
+            ".pdf",
         )
     ):
         raise NotImplementedError("This file type is not currently supported for download in memory.")
@@ -331,19 +332,10 @@ def _list_to_fileobj(list_data: list, path_to: str, **kwargs) -> io.BytesIO:
 
 
 def _str_to_fileobj(str_data: str, path_to: str, **kwargs) -> io.BytesIO:
-    """Convert str into bytes file object.
-
-    Args:
-        str_data (str): String to convert.
-        path_to (str): Saving file name.
-
-    Returns:
-        io.BytesIO: Bytes file object.
-    """
-    if fnmatch(path_to, "*.txt"):
-        buffer = io.BytesIO(bytes(str_data.encode("utf-8")))
+    if fnmatch(path_to, "*.txt") or fnmatch(path_to, "*.json"):
+        buffer = io.BytesIO(str_data.encode("utf-8"))
     else:
-        raise NotImplementedError("Uploading string currently supported only for 'txt'.")
+        raise NotImplementedError("Uploading string currently supported only for 'txt' and 'json'.")
     buffer.seek(0)
     return buffer
 
@@ -365,6 +357,21 @@ def _np_array_to_fileobj(np_array_data: np.ndarray, path_to: str, **kwargs) -> i
         pq.write_table(pa.table({"data": np_array_data}), buffer, **kwargs)
     else:
         raise NotImplementedError("Uploading numpy array currently supported only for 'csv' and 'parquet.")
+    buffer.seek(0)
+    return buffer
+
+
+def _pdf_to_fileobj(pdf_data: bytes, path_to: str, **kwargs) -> io.BytesIO:
+    """Convert PDF bytes data into a bytes file object.
+
+    Args:
+        pdf_data (bytes): PDF data.
+        path_to (str): Saving file name (should end with '.pdf').
+
+    Returns:
+        io.BytesIO: Bytes file object wrapping the PDF data.
+    """
+    buffer = io.BytesIO(pdf_data)
     buffer.seek(0)
     return buffer
 
@@ -420,6 +427,8 @@ def upload_obj(
         obj = _str_to_fileobj(obj, path_to, **kwargs_writing)
     elif isinstance(obj, np.ndarray):
         obj = _np_array_to_fileobj(obj, path_to, **kwargs_writing)
+    elif isinstance(obj, bytes) and fnmatch(path_to, "*.pdf"):
+        obj = _pdf_to_fileobj(obj, path_to, **kwargs_writing)
     else:
         obj = _unsupp_data_to_fileobj(obj, path_to, **kwargs_writing)
         warnings.warn("Data uploaded as pickle. Please consider other accessible file types among the supported ones.")

@@ -205,7 +205,7 @@ def enrich_topic_labels(text_df: pd.DataFrame, split_sentences_flag: bool = True
     """
 
     labels_df = []
-    for mission in ["ASF", "AHL", "AFS", "X"]:
+    for mission in ["ASF", "AHL", "AFS", "X", "Nesta"]:
         labels_df.append(enrich_keyword_labels(text_df, mission, split_sentences_flag=split_sentences_flag))
     return pd.concat(labels_df, ignore_index=True).pipe(transform_labels_df)
 

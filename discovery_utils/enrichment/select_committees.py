@@ -591,5 +591,5 @@ def main():
     logger.info("Keyword search completed successfully")
 
 
-if "__name__" == "__main__":
+if __name__ == "__main__":
     main()

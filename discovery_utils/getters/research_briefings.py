@@ -554,6 +554,7 @@ def download_pdf_for_briefing(pdf_url: str, pdf_path: str, max_attempts: int = 3
         True if download was successful, False otherwise
     """
     success = False
+    # requests runs into issues when accessing the pdfs, but cloudscraper works
     scraper = cloudscraper.create_scraper()
 
     # Check there's somewhere to save the pdfs

@@ -48,6 +48,7 @@ langchain = "^0.3.15"
 bertopic = "^0.16.4"
 slack-sdk = "^3.34.0"
 cloudscraper = "^1.2.71"
+pdfplumber = "^0.11.5"
 
 [tool.poetry.group.evals]
 optional = true

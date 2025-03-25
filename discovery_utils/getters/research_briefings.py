@@ -1,9 +1,9 @@
 """
 Research Briefings Getter with S3 Integration
 
-This script downloads research briefings data from the Parliament Open Data API,
+This module downloads research briefings data from the Parliament Open Data API,
 including both the JSON metadata and PDF documents. It stores the metadata in
-a DataFrame and downloads PDFs as separate files, with options to store results
+a DataFrame and downloads PDFs as separate files, with option to store results
 locally or in S3.
 """
 
@@ -44,13 +44,12 @@ from discovery_utils.utils.s3 import upload_obj
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("research_briefings_download.log"), logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
 
 class ResearchBriefingsAPI:
-    """Client for interacting with the UK Parliament Research Briefings API."""
+    """Client for interacting with the Research Briefings API."""
 
     def __init__(self, base_url: str = "https://lda.data.parliament.uk") -> None:
         """Initialise the API client with the base URL."""
@@ -211,7 +210,7 @@ class ResearchBriefingsToS3:
         self.runs_prefix = f"{prefix}/runs"
         self.pdfs_prefix = f"{prefix}/pdfs"
 
-        logger.info(f"Initialized S3 handler for bucket: {self.bucket}, prefix: {prefix}")
+        logger.info(f"Initialised S3 handler for bucket: {self.bucket}, prefix: {prefix}")
 
     def create_run_directory(self, run_date: datetime) -> str:
         """
@@ -223,7 +222,7 @@ class ResearchBriefingsToS3:
         Returns:
             Run directory prefix
         """
-        date_str = run_date.strftime("%Y%m%d_%H%M%S")
+        date_str = run_date.strftime("%Y%m%d")
         return f"{self.prefix}/runs/{date_str}"
 
     def get_existing_briefing_ids(self) -> Set[str]:
@@ -244,8 +243,6 @@ class ResearchBriefingsToS3:
             with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
                 tmp_path = tmp.name
                 self.s3_client.download_file(self.bucket, self.cumulative_file_key, tmp_path)
-
-                # Read the parquet file
                 df = pd.read_parquet(tmp_path)
 
                 # Clean up
@@ -364,7 +361,7 @@ class ResearchBriefingsToS3:
         Returns:
             S3 URI for the uploaded artifact
         """
-        filename = "artifact.json"
+        filename = "ingestion_artifact.json"
         s3_key = f"{run_dir}/{filename}"
 
         try:
@@ -406,8 +403,6 @@ class ResearchBriefingsToS3:
 
                     # Load existing data
                     existing_df = pd.read_parquet(tmp_path)
-
-                    # Clean up temp file
                     os.unlink(tmp_path)
 
                     # Merge with new data
@@ -739,7 +734,6 @@ def process_briefings_batch(
         # Extract metadata to dictionary
         metadata = extract_briefing_metadata(full_briefing)
 
-        # Add to existing IDs so we don't try to download it again
         existing_ids.add(briefing_id)
 
         # Download the PDF
@@ -812,7 +806,7 @@ def process_briefings_batch(
                     else:
                         stats["pdfs_failed"] += 1
             else:
-                # Local storage mode (simpler case - just download if needed)
+                # Local storage mode
                 # Check if PDF already exists locally
                 if os.path.exists(local_pdf_path):
                     logger.info(f"PDF already exists locally: {pdf_filename}")
@@ -878,9 +872,7 @@ def generate_pipeline_artifact(
     Returns:
         Path to the created artifact file
     """
-    # Add timestamp to artifact
     artifact_data = {
-        "timestamp": datetime.now().isoformat(),
         "run_date": run_date.isoformat(),
     }
 
@@ -944,7 +936,6 @@ def download_research_briefings(
     Returns:
         Dictionary with metadata about the download
     """
-    # Set the run date (used for file naming)
     run_date = datetime.now()
 
     # Create S3 handler if using S3
@@ -955,10 +946,8 @@ def download_research_briefings(
         run_dir = s3_handler.create_run_directory(run_date)
         logger.info(f"Created run directory: {run_dir}")
 
-    # Always create local output directory, regardless of storage mode
     os.makedirs(output_dir, exist_ok=True)
 
-    # Always create PDF directory for local copies, regardless of storage mode
     pdf_dir = os.path.join(output_dir, "pdfs")
     os.makedirs(pdf_dir, exist_ok=True)
 

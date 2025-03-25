@@ -41,7 +41,6 @@ from discovery_utils.utils.s3 import upload_obj
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("research_briefings_enrichment.log"), logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
 
@@ -350,7 +349,7 @@ def prepare_data_for_keyword_analysis(
     # Create a clean DataFrame with just id and text for analysis
     analysis_df = df[["id"]].copy()
 
-    # For keyword analysis, we'll combine abstract and PDF text
+    # For keyword analysis, combine abstract and PDF text
     # But keep track of the source for each text segment
     analysis_df["abstract_text"] = df.apply(
         lambda row: str(row["abstract"]) if pd.notna(row["abstract"]) else "",
@@ -557,47 +556,10 @@ def get_detailed_keyword_matches(
     return matches_df
 
 
-def validate_keyword_matches(matches_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Validate that keywords actually appear in the sentences as claimed.
-
-    Args:
-        matches_df: DataFrame with keyword matches
-
-    Returns:
-        DataFrame with validated keyword matches
-    """
-    logger.info("Validating keyword matches...")
-
-    valid_matches = []
-    invalid_matches = []
-
-    for idx, row in matches_df.iterrows():
-        all_valid = True
-
-        for keyword in row["keywords"]:
-            # Check if the keyword is actually in the sentence (case insensitive)
-            if keyword.lower() not in row["sentence"].lower():
-                all_valid = False
-                logger.warning(f"Invalid match: '{keyword}' not found in sentence from {row['id']}")
-                logger.warning(f"Sentence: {row['sentence']}")
-                break
-
-        if all_valid:
-            valid_matches.append(row)
-        else:
-            invalid_matches.append(row)
-
-    logger.info(f"Found {len(valid_matches)} valid matches and {len(invalid_matches)} invalid matches")
-
-    # Return only valid matches
-    return pd.DataFrame(valid_matches) if valid_matches else matches_df.head(0)
-
-
 def update_cumulative_keyword_matches(
     matches_df: pd.DataFrame,
     s3_handler: ResearchBriefingsToS3,
-    csv_key: str = "research_briefings_labelstore_keywords.csv",
+    labelstore_key: str = "research_briefings_labelstore_keywords.parquet",
 ) -> bool:
     """
     Update the cumulative keyword matches file in S3.
@@ -605,7 +567,7 @@ def update_cumulative_keyword_matches(
     Args:
         matches_df: DataFrame with new keyword matches
         s3_handler: S3 handler for S3 operations
-        csv_key: S3 key for the cumulative CSV file
+        labelstore_key: S3 key for the cumulative parquet file
 
     Returns:
         True if update was successful, False otherwise
@@ -614,7 +576,7 @@ def update_cumulative_keyword_matches(
         logger.warning("No keyword matches to update")
         return False
 
-    full_key = f"{s3_handler.prefix}/{csv_key}"
+    full_key = f"{s3_handler.prefix}/{labelstore_key}"
 
     try:
         # Check if file exists in S3
@@ -626,12 +588,12 @@ def update_cumulative_keyword_matches(
 
         if file_exists:
             # Download existing file
-            with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
                 tmp_path = tmp.name
                 s3_handler.s3_client.download_file(s3_handler.bucket, full_key, tmp_path)
 
                 # Load existing data
-                existing_df = pd.read_csv(tmp_path)
+                existing_df = pd.read_parquet(tmp_path)
 
                 # Clean up
                 os.unlink(tmp_path)
@@ -646,14 +608,14 @@ def update_cumulative_keyword_matches(
                 logger.info(f"After deduplication: {len(dedup_df)} entries")
         else:
             # First time creating file
-            logger.info(f"Creating new keyword matches CSV with {len(matches_df)} entries")
+            logger.info(f"Creating new keyword matches parquet with {len(matches_df)} entries")
             dedup_df = matches_df
 
         # Upload to S3
         # First save to temp file
-        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False) as tmp:
+        with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
             tmp_path = tmp.name
-            dedup_df.to_csv(tmp_path, index=False)
+            dedup_df.to_parquet(tmp_path, index=False)
 
             # Upload to S3
             s3_handler.s3_client.upload_file(tmp_path, s3_handler.bucket, full_key)
@@ -691,11 +653,8 @@ def generate_pipeline_artifact(
     Returns:
         Path to the created artifact file
     """
-    # Add timestamp to artifact
     artifact_data = {
-        "timestamp": datetime.now().isoformat(),
         "run_date": run_date.isoformat(),
-        "analysis_type": "keyword_enrichment",
     }
 
     # Add formatted summary
@@ -729,7 +688,7 @@ def generate_pipeline_artifact(
     if use_s3 and s3_handler:
         # Upload to the same runs directory in S3
         date_str = run_date.strftime("%Y%m%d")
-        s3_key = f"{s3_handler.runs_prefix}/enrichment_{date_str}.json"
+        s3_key = f"{s3_handler.runs_prefix}/{date_str}/{artifact_filename}"
 
         try:
             # Upload the artifact JSON to S3
@@ -778,13 +737,12 @@ def analyse_research_briefings(
     Returns:
         Dictionary with analysis metadata
     """
-    # Set the run date (used for file naming)
     run_date = datetime.now()
 
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
 
-    # Initialize S3 handler if using S3
+    # Initialise S3 handler if using S3
     s3_handler = None
     if use_s3:
         s3_handler = ResearchBriefingsToS3(s3_prefix)
@@ -813,25 +771,17 @@ def analyse_research_briefings(
         try:
             # Perform keyword analysis
             result_df = perform_keyword_analysis(df, keyword_type, analysis_df)
-
-            # Get detailed keyword matches
             matches_df = get_detailed_keyword_matches(df, keyword_type, analysis_df)
 
             if not matches_df.empty:
-                # Validate the matches
-                valid_matches_df = validate_keyword_matches(matches_df)
-
-                # Add to collection of all matches
-                all_matches.append(valid_matches_df)
-
-                # Store results
+                all_matches.append(matches_df)
                 all_results[keyword_type] = {
                     "total_briefings": len(df),
                     "briefings_with_keywords": int(result_df["has_keywords"].sum()),
-                    "keyword_matches": len(valid_matches_df),
+                    "keyword_matches": len(matches_df),
                 }
 
-                logger.info(f"Found {len(valid_matches_df)} valid matches for {keyword_type}")
+                logger.info(f"Found {len(matches_df)} matches for {keyword_type}")
             else:
                 logger.info(f"No keyword matches found for {keyword_type}")
                 all_results[keyword_type] = {
@@ -849,10 +799,10 @@ def analyse_research_briefings(
         combined_matches = pd.concat(all_matches, ignore_index=True)
         logger.info(f"Combined {len(combined_matches)} matches from all keyword types")
 
-        # Save to CSV file
+        # Save to parquet file
         date_str = run_date.strftime("%Y%m%d")
-        local_output_file = os.path.join(output_dir, f"research_briefings_enriched_{date_str}.csv")
-        combined_matches.to_csv(local_output_file, index=False)
+        local_output_file = os.path.join(output_dir, f"research_briefings_enriched.parquet")
+        combined_matches.to_parquet(local_output_file, index=False)
         logger.info(f"Saved all keyword matches locally to {local_output_file}")
 
         # If using S3, also update the cumulative keyword matches file
@@ -880,8 +830,8 @@ def analyse_research_briefings(
             ]
         )
         date_str = run_date.strftime("%Y%m%d")
-        local_output_file = os.path.join(output_dir, f"research_briefings_enriched_{date_str}.csv")
-        combined_matches.to_csv(local_output_file, index=False)
+        local_output_file = os.path.join(output_dir, f"research_briefings_enriched_{date_str}.parquet")
+        combined_matches.to_parquet(local_output_file, index=False)
         logger.info(f"Saved empty matches file locally to {local_output_file}")
 
         unique_briefings = 0
@@ -944,9 +894,6 @@ if __name__ == "__main__":
         "--batch-size", type=int, default=10, help="Number of PDFs to process in each batch (default: 10)"
     )
     parser.add_argument("--use-s3", action="store_true", help="Store files in S3 instead of locally")
-    parser.add_argument(
-        "--s3-bucket", default="discovery-iss", help="S3 bucket name (required if --use-s3 is specified)"
-    )
     parser.add_argument(
         "--s3-prefix",
         default="data/policy/research_briefings",

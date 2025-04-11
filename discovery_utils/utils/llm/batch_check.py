@@ -161,11 +161,13 @@ class LLMProcessor:
 
     def run(self, text_data: Dict[str, str], batch_size: int = 10, sleep_time: float = 0.5) -> None:
         """Run the processing of the text data."""
-        if asyncio.get_event_loop().is_running():
+        try:
             # If already in an event loop (e.g., Jupyter Notebook), use `create_task`
-            return asyncio.create_task(self.process_text_data(text_data, batch_size, sleep_time))
-        else:
+            loop = asyncio.get_running_loop()
+            return loop.create_task(self.process_text_data(text_data, batch_size, sleep_time))
+        except RuntimeError:
             # For non-notebook environments
+            # No running loop, run normally
             asyncio.run(self.process_text_data(text_data, batch_size, sleep_time))
 
 

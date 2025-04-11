@@ -53,10 +53,15 @@ def get_llm(model_name: str = None, temperature: float = None) -> ChatOpenAI:
             temperature=temperature,
         )
     elif LLM_SERVICE == "OpenAI":
-        if (model_name is None) or (temperature is None):
-            raise ValueError("Model name and temperature must be specified when not using Azure OpenAI.")
+        if model_name is None:
+            raise ValueError("Model name must be specified when not using Azure OpenAI.")
         logging.info("Using OpenAI")
-        return ChatOpenAI(openai_api_key=os.getenv("OPENAI_API_KEY"), model_name=model_name, temperature=temperature)
+        if temperature is None:
+            return ChatOpenAI(openai_api_key=os.getenv("OPENAI_API_KEY"), model_name=model_name)
+        else:
+            return ChatOpenAI(
+                openai_api_key=os.getenv("OPENAI_API_KEY"), model_name=model_name, temperature=temperature
+            )
 
 
 def tokenize_text(text: str, model_name: str) -> int:

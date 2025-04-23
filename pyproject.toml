@@ -16,6 +16,8 @@ packages = [
 
 [tool.poetry.dependencies]
 python = ">=3.10, <4.0"
+
+[tool.poetry.group.core.dependencies]
 boto3 = "*"
 urllib3 = "<2"
 pandas = "*"
@@ -65,6 +67,40 @@ llm = [
     "langchain-core",
     "langchain-openai",
     "langchain"
+]
+core = [
+    "boto3",
+    "urllib3",
+    "pandas",
+    "pyarrow",
+    "currencyconverter",
+    "df2gspread",
+    "python-dotenv",
+    "nltk",
+    "matplotlib",
+    "sentence-transformers",
+    "seaborn",
+    "evaluate",
+    "accelerate",
+    "datasets",
+    "skypilot",
+    "openai",
+    "langfuse",
+    "llama-index",
+    "pyalex",
+    "lxml",
+    "huggingface-hub",
+    "lancedb",
+    "tantivy",
+    "torch",
+    "transformers",
+    "altair",
+    "langchain-core",
+    "langchain-openai",
+    "langchain",
+    "bertopic",
+    "slack-sdk",
+    "gspread-formatting"
 ]
 
 

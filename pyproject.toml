@@ -17,6 +17,12 @@ packages = [
 [tool.poetry.dependencies]
 python = ">=3.10, <4.0"
 
+[tool.poetry.group.core]
+optional = true
+
+[tool.poetry.group.llm]
+optional = true
+
 [tool.poetry.group.core.dependencies]
 boto3 = "*"
 urllib3 = "<2"

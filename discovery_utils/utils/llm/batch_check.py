@@ -7,6 +7,7 @@ More info here: https://github.com/nestauk/discovery_utils/wiki/Checking-data-wi
 
 import asyncio
 import json
+import logging
 import math
 
 from datetime import datetime
@@ -27,7 +28,6 @@ from pydantic import BaseModel
 from pydantic import Field
 from pydantic import create_model
 
-from discovery_utils import logging
 from discovery_utils.utils.llm.llm_utils import get_langfuse_handler
 from discovery_utils.utils.llm.llm_utils import get_llm
 

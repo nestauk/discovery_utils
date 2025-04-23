@@ -1,3 +1,4 @@
+import logging
 import os
 
 from datetime import datetime
@@ -9,8 +10,6 @@ from langchain_openai import AzureChatOpenAI
 from langchain_openai import ChatOpenAI
 from langfuse.callback import CallbackHandler
 from pydantic import BaseModel
-
-from discovery_utils import logging
 
 
 try:

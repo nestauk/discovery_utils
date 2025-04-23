@@ -49,6 +49,25 @@ bertopic = "^0.16.4"
 slack-sdk = "^3.34.0"
 gspread-formatting = "^1.2.0"
 
+[tool.poetry.group.llm.dependencies]
+openai = ">=1.35.9"
+langfuse = ">=2.38.1"
+llama-index = ">=0.10.65"
+langchain-core = "^0.3.31"
+langchain-openai = "^0.3.1"
+langchain = "^0.3.15"
+
+[tool.poetry.extras]
+llm = [
+    "openai",
+    "langfuse",
+    "llama-index",
+    "langchain-core",
+    "langchain-openai",
+    "langchain"
+]
+
+
 [tool.poetry.group.evals]
 optional = true
 

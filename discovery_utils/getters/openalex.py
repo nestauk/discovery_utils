@@ -8,6 +8,7 @@ USER_EMAIL = os.environ["USER_EMAIL"]
 
 def get_openalex_works(
     research_question: str,
+    publication_year: str = None,
     user: str = USER_EMAIL,
     min_cites: str = ">4",
     n_works: int = 10000,
@@ -30,7 +31,14 @@ def get_openalex_works(
     # set pyalex config email
     pyalex.config["email"] = user
 
-    query = pyalex.Works().search(research_question).filter(cited_by_count=min_cites)
+    if publication_year is None:
+        query = pyalex.Works().search(research_question).filter(cited_by_count=min_cites)
+    else:
+        query = (
+            pyalex.Works()
+            .search(research_question)
+            .filter(cited_by_count=min_cites, publication_year=publication_year)
+        )
 
     results = []
     for page in query.paginate(per_page=200, n_max=n_works):

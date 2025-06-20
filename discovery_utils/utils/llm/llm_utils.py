@@ -95,7 +95,9 @@ class StructuredOutputGenerator:
             Should contain "system_message" and "user_message" keys.
     """
 
-    def __init__(self, model_dict: dict, output_class: BaseModel, prompts: dict) -> None:
+    def __init__(
+        self, model_dict: dict, output_class: BaseModel, prompts: dict, check_token_length: bool = True
+    ) -> None:
         """Initialise the structured output generator."""
         self.llm = get_llm(model_dict["model_name"], model_dict["temperature"])
         self.model_name = model_dict["model_name"]
@@ -104,6 +106,7 @@ class StructuredOutputGenerator:
         self.langfuse_handler = get_langfuse_handler()
         self.output_class = output_class
         self.prompts = prompts
+        self.check_token_length = check_token_length
 
     def generate(self, input_dict: dict) -> BaseModel:
         """Generate structured output from input text.
@@ -121,7 +124,8 @@ class StructuredOutputGenerator:
         )
         # Check token length
         _input_dict = input_dict.copy()
-        _input_dict["input"] = truncate_to_max_tokens(input_dict["input"], self.model_name, self.max_tokens)
+        if self.check_token_length:
+            _input_dict["input"] = truncate_to_max_tokens(input_dict["input"], self.model_name, self.max_tokens)
         structured_prompt = structured_prompt.format(**_input_dict)
         # Get response from LLM
         return structured_llm.invoke(structured_prompt, config={"callbacks": [self.langfuse_handler]})

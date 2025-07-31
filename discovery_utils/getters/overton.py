@@ -1416,3 +1416,121 @@ class OvertonGetter:
 
         self.logger.debug(f"Formatted {len(screening_dict)} documents for screening")
         return screening_dict
+
+    def search_multiple_values(
+        self,
+        parameter_values: Dict[str, List[str]],
+        max_results: int = 1000,
+        max_per_value: int = None,
+        **search_params,
+    ) -> pd.DataFrame:
+        """Search with multiple values for filtering parameters.
+
+        Since the Overton API doesn't support comma-separated values directly,
+        this method performs multiple searches and combines the results.
+
+        Args:
+            parameter_values (Dict[str, List[str]]): Dictionary mapping parameter
+                names to lists of values. E.g., {"source_country": ["UK", "USA"]}
+            max_results (int, optional): Maximum total results to return. Defaults to 1000.
+            max_per_value (int, optional): Maximum results per individual value search.
+                If None, calculates automatically based on max_results.
+            **search_params: Additional search parameters
+
+        Returns:
+            pd.DataFrame: Combined and deduplicated results
+
+        Example:
+            >>> # Search UK and USA documents
+            >>> docs = overton.search_multiple_values(
+            ...     {"source_country": ["UK", "USA"]},
+            ...     query="climate change",
+            ...     max_results=100
+            ... )
+            >>>
+            >>> # Search multiple source types
+            >>> docs = overton.search_multiple_values(
+            ...     {"source_type": ["government", "think tank"]},
+            ...     query="renewable energy"
+            ... )
+            >>>
+            >>> # Search multiple parameters simultaneously
+            >>> docs = overton.search_multiple_values(
+            ...     {
+            ...         "source_country": ["UK", "Germany"],
+            ...         "source_type": ["government"]
+            ...     },
+            ...     query="climate policy"
+            ... )
+        """
+        if not parameter_values:
+            raise OvertonValidationError("parameter_values cannot be empty", "parameter_values")
+
+        # Calculate results per individual search
+        if max_per_value is None:
+            total_combinations = 1
+            for values in parameter_values.values():
+                total_combinations *= len(values)
+            max_per_value = max(1, max_results // total_combinations)
+
+        all_results = []
+        search_count = 0
+
+        # Generate all combinations of parameter values
+        import itertools
+
+        param_names = list(parameter_values.keys())
+        param_value_lists = list(parameter_values.values())
+
+        for value_combination in itertools.product(*param_value_lists):
+            # Create search parameters for this combination
+            combination_params = dict(zip(param_names, value_combination))
+            combination_params.update(search_params)
+            combination_params["max_results"] = max_per_value
+
+            try:
+                self.logger.debug(f"Searching with parameters: {combination_params}")
+                docs = self.search_documents(**combination_params)
+
+                if len(docs) > 0:
+                    # Add metadata about which values produced these results
+                    for param, value in zip(param_names, value_combination):
+                        docs[f"_search_{param}"] = value
+                    all_results.append(docs)
+
+                search_count += 1
+
+            except Exception as e:
+                self.logger.warning(f"Failed search with {combination_params}: {e}")
+                continue
+
+        if not all_results:
+            self.logger.warning("No results found for any parameter combination")
+            return pd.DataFrame()
+
+        # Combine all results
+        combined = pd.concat(all_results, ignore_index=True)
+
+        # Remove duplicates based on document ID
+        initial_count = len(combined)
+        combined = combined.drop_duplicates(subset=["id"], keep="first")
+        final_count = len(combined)
+
+        if initial_count != final_count:
+            self.logger.info(f"Removed {initial_count - final_count} duplicate documents")
+
+        # Limit to max_results
+        if len(combined) > max_results:
+            combined = combined.head(max_results)
+            self.logger.info(f"Limited results to {max_results} documents")
+
+        # Remove temporary search metadata columns
+        search_cols = [col for col in combined.columns if col.startswith("_search_")]
+        if search_cols:
+            combined = combined.drop(columns=search_cols)
+
+        self.logger.info(
+            f"Combined search completed: {search_count} individual searches, " f"{final_count} unique documents found"
+        )
+
+        return combined

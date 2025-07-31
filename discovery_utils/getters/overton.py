@@ -984,13 +984,16 @@ class OvertonGetter:
         return self._process_documents(final_documents)
 
     def _process_documents(self, documents: List[Dict]) -> pd.DataFrame:
-        """Convert API response documents to standardised DataFrame format.
+        """Convert API response documents to comprehensive DataFrame format.
+
+        Captures all available fields from the Overton API response to ensure
+        no valuable data is lost during processing.
 
         Args:
             documents (List[Dict]): Raw document data from API
 
         Returns:
-            pd.DataFrame: Processed and normalised document data
+            pd.DataFrame: Processed and normalised document data with all available fields
         """
         if not documents:
             self.logger.warning("No documents to process")
@@ -1014,6 +1017,41 @@ class OvertonGetter:
                 elif not isinstance(topics, list):
                     topics = []
 
+                # Classifications normalisation
+                classifications = doc.get("classifications", [])
+                if isinstance(classifications, str):
+                    classifications = [classifications] if classifications else []
+                elif not isinstance(classifications, list):
+                    classifications = []
+
+                # Source tags normalisation
+                source_tags = doc.get("source_tags", [])
+                if isinstance(source_tags, str):
+                    source_tags = [source_tags] if source_tags else []
+                elif not isinstance(source_tags, list):
+                    source_tags = []
+
+                # Other identifiers normalisation
+                other_identifiers = doc.get("other_identifiers", [])
+                if isinstance(other_identifiers, str):
+                    other_identifiers = [other_identifiers] if other_identifiers else []
+                elif not isinstance(other_identifiers, list):
+                    other_identifiers = []
+
+                # Languages normalisation
+                languages = doc.get("languages", [])
+                if isinstance(languages, str):
+                    languages = [languages] if languages else []
+                elif not isinstance(languages, list):
+                    languages = []
+
+                # Highlights normalisation
+                highlights = doc.get("highlights", [])
+                if isinstance(highlights, str):
+                    highlights = [highlights] if highlights else []
+                elif not isinstance(highlights, list):
+                    highlights = []
+
                 # Content aggregation from multiple fields
                 content_fields = ["snippet", "llm_document_description", "abstract"]
                 content_parts = [doc.get(field, "").strip() for field in content_fields if doc.get(field)]
@@ -1033,23 +1071,91 @@ class OvertonGetter:
                 if not isinstance(source_info, dict):
                     source_info = {}
 
+                # Extract citation information safely
+                cites_info = doc.get("cites", {})
+                if not isinstance(cites_info, dict):
+                    cites_info = {}
+
+                # Normalise region data
+                source_region = source_info.get("region", [])
+                if isinstance(source_region, str):
+                    source_region = [source_region] if source_region else []
+                elif not isinstance(source_region, list):
+                    source_region = []
+
+                # Normalise citation arrays
+                scholarly_citations = cites_info.get("scholarly", [])
+                if not isinstance(scholarly_citations, list):
+                    scholarly_citations = []
+
+                policy_citations = cites_info.get("policy", [])
+                if not isinstance(policy_citations, list):
+                    policy_citations = []
+
+                news_citations = cites_info.get("news", [])
+                if not isinstance(news_citations, list):
+                    news_citations = []
+
+                people_citations = cites_info.get("people", [])
+                if not isinstance(people_citations, list):
+                    people_citations = []
+
                 result = {
+                    # Core identifiers
                     "id": doc.get("policy_document_id", ""),
+                    "pdf_document_id": doc.get("pdf_document_id", ""),
+                    # Title and content
                     "title": doc.get("title", ""),
+                    "translated_title": doc.get("translated_title", ""),
                     "abstract": full_content or "No abstract available",
                     "content": self._truncate_content(full_content, 1000),
+                    "snippet": doc.get("snippet", ""),
+                    # Authors and attribution
                     "authors": authors,
+                    "authors_are_organization": doc.get("authors_are_organization", False),
+                    # Publication metadata
                     "publication_year": publication_year,
+                    "published_on": published_on,
+                    "added_on": doc.get("added_on", ""),
+                    # Source information (comprehensive)
                     "venue": source_info.get("title", ""),
-                    "doi": doc.get("document_url", ""),
-                    "citation_count": self._safe_int_conversion(doc.get("citation_count", 0)),
-                    "topics": topics,
+                    "source_id": source_info.get("source_id", ""),
                     "source_country": source_info.get("country", ""),
                     "source_type": source_info.get("type", ""),
-                    "published_on": published_on,
+                    "source_subtype": source_info.get("subtype", ""),
+                    "source_region": source_region,
+                    "source_tags": source_tags,
+                    # URLs and access
+                    "doi": doc.get("document_url", ""),
                     "overton_url": doc.get("overton_url", ""),
+                    "overton_url_with_context": doc.get("overton_url_with_context", ""),
                     "pdf_url": doc.get("pdf_url", ""),
+                    "thumbnail": doc.get("thumbnail", ""),
+                    "thumbnail_path": doc.get("thumbnail_path", ""),
+                    "dont_show_pdf": doc.get("dont_show_pdf", ""),
+                    # Citation metrics
+                    "citation_count": self._safe_int_conversion(doc.get("citation_count", 0)),
+                    "citation_count_including_self": doc.get("citation_count_including_self", ""),
+                    # Search and ranking
                     "similarity_score": doc.get("similarity_score"),
+                    "es_score": self._safe_float_conversion(doc.get("es_score", 0)),
+                    # Classification and categorisation
+                    "topics": topics,
+                    "classifications": classifications,
+                    "overton_policy_document_series": doc.get("overton_policy_document_series", ""),
+                    # Additional metadata
+                    "other_identifiers": other_identifiers,
+                    "languages": languages,
+                    "highlights": highlights,
+                    # Citation relationships (detailed)
+                    "cites_scholarly": scholarly_citations,
+                    "cites_policy": policy_citations,
+                    "cites_news": news_citations,
+                    "cites_people": people_citations,
+                    "total_citations_made": len(scholarly_citations)
+                    + len(policy_citations)
+                    + len(news_citations)
+                    + len(people_citations),
                 }
                 processed.append(result)
 
@@ -1068,12 +1174,33 @@ class OvertonGetter:
         df["abstract"] = df["abstract"].fillna("No abstract available")
         df["content"] = df["content"].fillna("No content available")
         df["citation_count"] = pd.to_numeric(df["citation_count"], errors="coerce").fillna(0)
+        df["es_score"] = pd.to_numeric(df["es_score"], errors="coerce").fillna(0)
 
-        # Ensure authors and topics are lists
-        df["authors"] = df["authors"].apply(lambda x: x if isinstance(x, list) else [])
-        df["topics"] = df["topics"].apply(lambda x: x if isinstance(x, list) else [])
+        # Ensure list fields are properly formatted
+        list_columns = [
+            "authors",
+            "topics",
+            "classifications",
+            "source_tags",
+            "other_identifiers",
+            "languages",
+            "highlights",
+            "source_region",
+            "cites_scholarly",
+            "cites_policy",
+            "cites_news",
+            "cites_people",
+        ]
 
-        self.logger.debug(f"Processed {len(df)} documents successfully")
+        for col in list_columns:
+            if col in df.columns:
+                df[col] = df[col].apply(lambda x: x if isinstance(x, list) else [])
+
+        # Convert boolean fields
+        if "authors_are_organization" in df.columns:
+            df["authors_are_organization"] = df["authors_are_organization"].astype(bool)
+
+        self.logger.debug(f"Processed {len(df)} documents successfully with {len(df.columns)} fields")
         return df
 
     def _truncate_content(self, content: str, max_length: int = 1000) -> str:
@@ -1110,6 +1237,22 @@ class OvertonGetter:
             return int(float(value))
         except (ValueError, TypeError):
             return 0
+
+    def _safe_float_conversion(self, value: Any) -> float:
+        """Safely convert value to float.
+
+        Args:
+            value (Any): Value to convert
+
+        Returns:
+            float: Converted float or 0.0 if conversion fails
+        """
+        try:
+            if value is None:
+                return 0.0
+            return float(value)
+        except (ValueError, TypeError):
+            return 0.0
 
     def get_facets(self, query: Optional[str] = None, clear_cache: bool = False) -> Dict[str, List[Dict]]:
         """Get facet information for filtering searches.

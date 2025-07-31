@@ -369,11 +369,39 @@ class OvertonGetter:
         source_country: Optional[str] = None,
         source_region: Optional[str] = None,
         source_type: Optional[str] = None,
+        source: Optional[str] = None,
         published_after: Optional[Union[date, str]] = None,
         published_before: Optional[Union[date, str]] = None,
+        published_year: Optional[str] = None,
+        added_after: Optional[Union[date, str]] = None,
+        added_before: Optional[Union[date, str]] = None,
         topics: Optional[str] = None,
         classifications: Optional[str] = None,
+        authors: Optional[str] = None,
+        excluding_authors: Optional[str] = None,
+        excluding_source: Optional[str] = None,
         plain_dois_cited: Optional[str] = None,
+        cited_authors: Optional[str] = None,
+        cited_orcids: Optional[str] = None,
+        cited_policy_authors: Optional[str] = None,
+        cites_policy_document_id: Optional[str] = None,
+        cited_funders: Optional[str] = None,
+        policy_sources_cited: Optional[str] = None,
+        doi_prefixes_cited: Optional[str] = None,
+        news_outlets_cited: Optional[str] = None,
+        publishers_cited: Optional[str] = None,
+        journals_cited: Optional[str] = None,
+        policy_document_series: Optional[str] = None,
+        overton_policy_document_series: Optional[str] = None,
+        open_affiliations: Optional[str] = None,
+        open_cited_affiliations: Optional[str] = None,
+        open_cited_authors: Optional[str] = None,
+        open_cited_countries: Optional[str] = None,
+        open_linked_institution_authors: Optional[str] = None,
+        open_mentioned_affiliations: Optional[str] = None,
+        has_references: Optional[int] = None,
+        aggregation_field: Optional[str] = None,
+        aggregation_field_format: Optional[str] = None,
         min_similarity: float = 0.3,
         sort: str = "relevance",
         page: int = 1,
@@ -387,11 +415,39 @@ class OvertonGetter:
             source_country (str, optional): Filter by source country
             source_region (str, optional): Filter by source region
             source_type (str, optional): Filter by source type
+            source (str, optional): Filter by specific source (e.g., 'govuk')
             published_after (Union[date, str], optional): Start date filter
             published_before (Union[date, str], optional): End date filter
+            published_year (str, optional): Filter by specific publication year
+            added_after (Union[date, str], optional): Documents added to Overton after date
+            added_before (Union[date, str], optional): Documents added to Overton before date
             topics (str, optional): Topic filter
-            classifications (str, optional): Classification filter
+            classifications (str, optional): Classification filter (subject area)
+            authors (str, optional): Filter by policy document authors
+            excluding_authors (str, optional): Exclude documents by specified authors
+            excluding_source (str, optional): Exclude documents from specified source
             plain_dois_cited (str, optional): DOI citation filter
+            cited_authors (str, optional): Documents citing specified author
+            cited_orcids (str, optional): Documents citing specified ORCiD
+            cited_policy_authors (str, optional): Documents citing specified policy author
+            cites_policy_document_id (str, optional): Documents citing specific policy document
+            cited_funders (str, optional): Documents citing work from specified funder
+            policy_sources_cited (str, optional): Documents citing specified policy source
+            doi_prefixes_cited (str, optional): Documents citing specified DOI prefix
+            news_outlets_cited (str, optional): Documents citing specified news outlet
+            publishers_cited (str, optional): Documents citing specified publisher
+            journals_cited (str, optional): Documents citing specified journal
+            policy_document_series (str, optional): Filter by document series
+            overton_policy_document_series (str, optional): Filter by Overton document type
+            open_affiliations (str, optional): Documents citing/mentioning institution
+            open_cited_affiliations (str, optional): Documents citing institution
+            open_cited_authors (str, optional): Documents citing specified author
+            open_cited_countries (str, optional): Documents citing specified country
+            open_linked_institution_authors (str, optional): Documents citing/mentioning individual
+            open_mentioned_affiliations (str, optional): Documents mentioning institution
+            has_references (int, optional): Filter by reference presence (0 or 1)
+            aggregation_field (str, optional): Field for aggregation/faceting
+            aggregation_field_format (str, optional): Format for aggregation results
             min_similarity (float, optional): Minimum similarity for semantic search
             sort (str, optional): Sort order. Defaults to "relevance".
             page (int, optional): Page number. Defaults to 1.
@@ -423,25 +479,104 @@ class OvertonGetter:
         if source_region:
             params["source_region"] = source_region
 
-        # Source type handling
+        # Source filtering
         if source_type and source_type.strip() and source_type.lower() != "all":
             params["source_type"] = source_type
 
+        if source:
+            params["source"] = source
+
+        if excluding_source:
+            params["excluding_source"] = excluding_source
+
         # Date handling
-        for date_field, date_value in [("published_after", published_after), ("published_before", published_before)]:
+        date_params = [
+            ("published_after", published_after),
+            ("published_before", published_before),
+            ("added_after", added_after),
+            ("added_before", added_before),
+        ]
+
+        for date_field, date_value in date_params:
             if date_value:
                 if isinstance(date_value, date):
                     params[date_field] = date_value.isoformat()
                 else:
                     params[date_field] = str(date_value)
 
-        # Topic and classification filters
+        # Year filtering
+        if published_year:
+            params["published_year"] = str(published_year)
+
+        # Content and topic filters
         if topics:
             params["topics"] = topics
         if classifications:
             params["classifications"] = classifications
+
+        # Author filtering
+        if authors:
+            params["authors"] = authors
+        if excluding_authors:
+            params["excluding_authors"] = excluding_authors
+
+        # Citation filters - DOIs and documents
         if plain_dois_cited:
             params["plain_dois_cited"] = plain_dois_cited
+        if doi_prefixes_cited:
+            params["doi_prefixes_cited"] = doi_prefixes_cited
+        if cites_policy_document_id:
+            params["cites_policy_document_id"] = cites_policy_document_id
+
+        # Citation filters - Authors and people
+        if cited_authors:
+            params["cited_authors"] = cited_authors
+        if cited_orcids:
+            params["cited_orcids"] = cited_orcids
+        if cited_policy_authors:
+            params["cited_policy_authors"] = cited_policy_authors
+        if open_cited_authors:
+            params["open_cited_authors"] = open_cited_authors
+        if open_linked_institution_authors:
+            params["open_linked_institution_authors"] = open_linked_institution_authors
+
+        # Citation filters - Institutions and affiliations
+        if open_affiliations:
+            params["open_affiliations"] = open_affiliations
+        if open_cited_affiliations:
+            params["open_cited_affiliations"] = open_cited_affiliations
+        if open_mentioned_affiliations:
+            params["open_mentioned_affiliations"] = open_mentioned_affiliations
+        if open_cited_countries:
+            params["open_cited_countries"] = open_cited_countries
+
+        # Citation filters - Publishers and sources
+        if cited_funders:
+            params["cited_funders"] = cited_funders
+        if policy_sources_cited:
+            params["policy_sources_cited"] = policy_sources_cited
+        if news_outlets_cited:
+            params["news_outlets_cited"] = news_outlets_cited
+        if publishers_cited:
+            params["publishers_cited"] = publishers_cited
+        if journals_cited:
+            params["journals_cited"] = journals_cited
+
+        # Document series and types
+        if policy_document_series:
+            params["policy_document_series"] = policy_document_series
+        if overton_policy_document_series:
+            params["overton_policy_document_series"] = overton_policy_document_series
+
+        # Reference filtering
+        if has_references is not None and has_references in [0, 1]:
+            params["has_references"] = has_references
+
+        # Aggregation and faceting
+        if aggregation_field:
+            params["aggregation_field"] = aggregation_field
+        if aggregation_field_format:
+            params["aggregation_field_format"] = aggregation_field_format
 
         # Sorting and pagination
         params["sort"] = sort
@@ -596,11 +731,39 @@ class OvertonGetter:
         semantic_search: bool = False,
         max_results: int = 1000,
         source_country: Optional[str] = None,
+        source_region: Optional[str] = None,
         source_type: Optional[str] = None,
+        source: Optional[str] = None,
         published_after: Optional[Union[date, str]] = None,
         published_before: Optional[Union[date, str]] = None,
+        published_year: Optional[str] = None,
+        added_after: Optional[Union[date, str]] = None,
+        added_before: Optional[Union[date, str]] = None,
         topics: Optional[str] = None,
         classifications: Optional[str] = None,
+        authors: Optional[str] = None,
+        excluding_authors: Optional[str] = None,
+        excluding_source: Optional[str] = None,
+        plain_dois_cited: Optional[str] = None,
+        cited_authors: Optional[str] = None,
+        cited_orcids: Optional[str] = None,
+        cited_policy_authors: Optional[str] = None,
+        cites_policy_document_id: Optional[str] = None,
+        cited_funders: Optional[str] = None,
+        policy_sources_cited: Optional[str] = None,
+        doi_prefixes_cited: Optional[str] = None,
+        news_outlets_cited: Optional[str] = None,
+        publishers_cited: Optional[str] = None,
+        journals_cited: Optional[str] = None,
+        policy_document_series: Optional[str] = None,
+        overton_policy_document_series: Optional[str] = None,
+        open_affiliations: Optional[str] = None,
+        open_cited_affiliations: Optional[str] = None,
+        open_cited_authors: Optional[str] = None,
+        open_cited_countries: Optional[str] = None,
+        open_linked_institution_authors: Optional[str] = None,
+        open_mentioned_affiliations: Optional[str] = None,
+        has_references: Optional[int] = None,
         sort: str = "relevance",
         page: int = 1,
         **kwargs,
@@ -609,7 +772,7 @@ class OvertonGetter:
 
         Provides comprehensive search capabilities across Overton's policy
         document database with support for text search, semantic search,
-        and advanced filtering options.
+        and extensive filtering options including citation analysis.
 
         Args:
             query (str, optional): Search query string. If None, returns
@@ -620,12 +783,41 @@ class OvertonGetter:
                 Defaults to 1000. API enforces pagination limits.
             source_country (str, optional): Filter by country/region. Supports
                 special values like "UK", "All but UK", "OECD members", etc.
+            source_region (str, optional): Filter by geographic region.
             source_type (str, optional): Filter by source type (e.g., "government").
+            source (str, optional): Filter by specific source (e.g., "govuk").
             published_after (Union[date, str], optional): Start date for document publication.
             published_before (Union[date, str], optional): End date for document publication.
+            published_year (str, optional): Filter by specific publication year.
+            added_after (Union[date, str], optional): Documents added to Overton after date.
+            added_before (Union[date, str], optional): Documents added to Overton before date.
             topics (str, optional): Topic filter string.
-            classifications (str, optional): Classification filter string.
-            sort (str, optional): Sort order. Options: "relevance", "date". Defaults to "relevance".
+            classifications (str, optional): Subject area classification filter.
+            authors (str, optional): Filter by policy document authors.
+            excluding_authors (str, optional): Exclude documents by specified authors.
+            excluding_source (str, optional): Exclude documents from specified source.
+            plain_dois_cited (str, optional): Documents citing specified DOI.
+            cited_authors (str, optional): Documents citing specified author.
+            cited_orcids (str, optional): Documents citing specified ORCiD.
+            cited_policy_authors (str, optional): Documents citing specified policy author.
+            cites_policy_document_id (str, optional): Documents citing specific policy document.
+            cited_funders (str, optional): Documents citing work from specified funder.
+            policy_sources_cited (str, optional): Documents citing specified policy source.
+            doi_prefixes_cited (str, optional): Documents citing specified DOI prefix.
+            news_outlets_cited (str, optional): Documents citing specified news outlet.
+            publishers_cited (str, optional): Documents citing specified publisher.
+            journals_cited (str, optional): Documents citing specified journal.
+            policy_document_series (str, optional): Filter by document series.
+            overton_policy_document_series (str, optional): Filter by Overton document type.
+            open_affiliations (str, optional): Documents citing/mentioning institution.
+            open_cited_affiliations (str, optional): Documents citing institution.
+            open_cited_authors (str, optional): Documents citing specified author.
+            open_cited_countries (str, optional): Documents citing specified country.
+            open_linked_institution_authors (str, optional): Documents citing/mentioning individual.
+            open_mentioned_affiliations (str, optional): Documents mentioning institution.
+            has_references (int, optional): Filter by reference presence (0=no refs, 1=has refs).
+            sort (str, optional): Sort order. Options: "relevance", "date", "citations".
+                Defaults to "relevance".
             page (int, optional): Starting page number. Defaults to 1.
             **kwargs: Additional search parameters for the Overton API.
 
@@ -651,21 +843,34 @@ class OvertonGetter:
 
         Example:
             >>> overton = OvertonGetter(api_key="your_key")
-            >>> docs = overton.search_documents(
-            ...     "climate change",
-            ...     source_country="UK",
-            ...     published_after=date(2023, 1, 1),
-            ...     max_results=100
+            >>> # Basic search
+            >>> docs = overton.search_documents("climate change", max_results=100)
+            >>>
+            >>> # Advanced citation analysis
+            >>> citing_docs = overton.search_documents(
+            ...     cited_authors="Thomas Piketty",
+            ...     excluding_source="who",
+            ...     has_references=1,
+            ...     source_country="UK"
             ... )
-            >>> print(f"Found {len(docs)} documents")
+            >>>
+            >>> # Institution analysis
+            >>> oxford_docs = overton.search_documents(
+            ...     open_affiliations="University of Oxford",
+            ...     published_year="2023"
+            ... )
         """
         # Parameter validation
         if max_results <= 0:
             raise OvertonValidationError("max_results must be positive", "max_results")
         if page < 1:
             raise OvertonValidationError("page must be >= 1", "page")
-        if sort not in ["relevance", "date"]:
-            raise OvertonValidationError("sort must be 'relevance' or 'date'", "sort")
+        if sort not in ["relevance", "date", "citations", "expanded_citations", "added_on"]:
+            raise OvertonValidationError(
+                "sort must be one of: relevance, date, citations, expanded_citations, added_on", "sort"
+            )
+        if has_references is not None and has_references not in [0, 1]:
+            raise OvertonValidationError("has_references must be 0 or 1", "has_references")
 
         self.logger.info(f"Searching documents: query='{query}', max_results={max_results}")
 
@@ -674,11 +879,39 @@ class OvertonGetter:
             query=query,
             semantic_search=semantic_search,
             source_country=source_country,
+            source_region=source_region,
             source_type=source_type,
+            source=source,
             published_after=published_after,
             published_before=published_before,
+            published_year=published_year,
+            added_after=added_after,
+            added_before=added_before,
             topics=topics,
             classifications=classifications,
+            authors=authors,
+            excluding_authors=excluding_authors,
+            excluding_source=excluding_source,
+            plain_dois_cited=plain_dois_cited,
+            cited_authors=cited_authors,
+            cited_orcids=cited_orcids,
+            cited_policy_authors=cited_policy_authors,
+            cites_policy_document_id=cites_policy_document_id,
+            cited_funders=cited_funders,
+            policy_sources_cited=policy_sources_cited,
+            doi_prefixes_cited=doi_prefixes_cited,
+            news_outlets_cited=news_outlets_cited,
+            publishers_cited=publishers_cited,
+            journals_cited=journals_cited,
+            policy_document_series=policy_document_series,
+            overton_policy_document_series=overton_policy_document_series,
+            open_affiliations=open_affiliations,
+            open_cited_affiliations=open_cited_affiliations,
+            open_cited_authors=open_cited_authors,
+            open_cited_countries=open_cited_countries,
+            open_linked_institution_authors=open_linked_institution_authors,
+            open_mentioned_affiliations=open_mentioned_affiliations,
+            has_references=has_references,
             sort=sort,
             page=page,
             **kwargs,

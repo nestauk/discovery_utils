@@ -917,16 +917,7 @@ class OvertonGetter:
             **kwargs,
         )
 
-        # Handle single page vs multi-page requests
-        if max_results <= 200:  # Single page request
-            response = self._make_request("documents.php", params)
-            documents = response.get("results", [])
-            limited_documents = documents[:max_results]
-
-            self.logger.info(f"Retrieved {len(limited_documents)} documents (single page)")
-            return self._process_documents(limited_documents)
-
-        # Multi-page request with pagination
+        # Use pagination universally to ensure consistent retrieval across sizes
         return self._paginate_search(params, max_results)
 
     def _paginate_search(self, base_params: Dict[str, Any], max_results: int) -> pd.DataFrame:
@@ -1280,7 +1271,8 @@ class OvertonGetter:
         if self._facets_cache and not clear_cache and not query:
             return self._facets_cache
 
-        params = {}
+        # Overton requires this flag to return facet data
+        params = {"show_search_facets": "true"}
         if query:
             params["query"] = query
 

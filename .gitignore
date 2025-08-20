@@ -168,6 +168,12 @@ data/
 .credentials/*
 *.csv
 google_credentials.json
+horizonscanning.json
 tmp/
 notebooks/mission_radar/llm_check.jsonl
 notebooks/afs_interventions/*.jsonl
+
+# Cursor
+.cursor/
+memory-bank/
+docs/

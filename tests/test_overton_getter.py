@@ -3,8 +3,6 @@
 These tests mock API interactions to testbehaviour and edge cases.
 """
 
-import os
-
 from typing import Any
 from typing import Dict
 from typing import List
@@ -334,6 +332,53 @@ def test_search_multiple_values_combines_and_dedupes(monkeypatch: pytest.MonkeyP
     getter = OvertonGetter()
     df = getter.search_multiple_values({"source_country": ["UK", "USA"]}, max_results=10, query="q")
     assert sorted(df["id"].tolist()) == ["1", "2", "3"]
+    # ensure temporary _search_ columns are not leaked
+    assert not any(col.startswith("_search_") for col in df.columns)
+
+
+def test_search_multiple_values_multiple_params_and_limit(monkeypatch: pytest.MonkeyPatch):
+    """Combine lists for two parameters, dedupe, and respect computed max_per_value."""
+    # Create deterministic IDs per combination
+    def fake_search(self, **kwargs):
+        sc = kwargs.get("source_country")
+        st = kwargs.get("source_type")
+        # each combo yields two docs, some overlaps across combos
+        if (sc, st) == ("UK", "government"):
+            return pd.DataFrame(
+                [
+                    {"id": "uk-gov-1", "title": "t", "content": "c"},
+                    {"id": "shared-1", "title": "t", "content": "c"},
+                ]
+            )
+        if (sc, st) == ("UK", "think tank"):
+            return pd.DataFrame(
+                [
+                    {"id": "uk-tt-1", "title": "t", "content": "c"},
+                    {"id": "shared-1", "title": "t", "content": "c"},
+                ]
+            )
+        if (sc, st) == ("USA", "government"):
+            return pd.DataFrame(
+                [
+                    {"id": "us-gov-1", "title": "t", "content": "c"},
+                    {"id": "shared-2", "title": "t", "content": "c"},
+                ]
+            )
+        return pd.DataFrame(
+            [
+                {"id": "us-tt-1", "title": "t", "content": "c"},
+                {"id": "shared-2", "title": "t", "content": "c"},
+            ]
+        )
+
+    monkeypatch.setattr(OvertonGetter, "search_documents", fake_search)
+    getter = OvertonGetter()
+    params = {"source_country": ["UK", "USA"], "source_type": ["government", "think tank"]}
+    # With 4 combinations and max_results=3, computed max_per_value becomes 1; overall <= 3 results
+    df = getter.search_multiple_values(params, max_results=3, query="q")
+    assert len(df) <= 3
+    # ensure dedupe worked (no duplicated IDs)
+    assert df["id"].is_unique
 
 
 def test_retry_on_429_respects_retry_after_and_backoff(monkeypatch: pytest.MonkeyPatch):
